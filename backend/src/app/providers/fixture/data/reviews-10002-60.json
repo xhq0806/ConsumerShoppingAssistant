@@ -1,0 +1,10 @@
+{
+  "kind": "success",
+  "payload": {
+    "reviews": [],
+    "actual_start_at": null,
+    "actual_end_at": null,
+    "fetched_count": 0,
+    "warnings": ["60 天内没有合成评论"]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "kind": "success",
+  "payload": {
+    "product": {
+      "external_product_id": "10001",
+      "title": "星河 X1 合成测试手机",
+      "image_url": "https://fixture.invalid/products/10001.png",
+      "brand": "星河实验室",
+      "category": "手机",
+      "shop_name": "星河合成数据旗舰店",
+      "price": "3999.00",
+      "currency": "CNY",
+      "specifications": {"屏幕": "6.5 英寸", "存储": "256GB"},
+      "after_sales": ["合成示例：7 天无理由"],
+      "source": {"provider": "fixture", "source_id": "product-10001", "obtained_at": "2026-07-16T00:00:00Z"}
+    },
+    "skus": [
+      {"external_sku_id": "10001-blue-256", "name": "蓝色 256GB", "attributes": {"颜色": "蓝色", "存储": "256GB"}, "price": "3999.00", "selectable": true},
+      {"external_sku_id": "10001-black-512", "name": "黑色 512GB", "attributes": {"颜色": "黑色", "存储": "512GB"}, "price": "4499.00", "selectable": true}
+    ],
+    "missing_fields": [],
+    "warnings": []
+  }
+}

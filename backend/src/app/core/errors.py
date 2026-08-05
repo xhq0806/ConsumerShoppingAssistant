@@ -1,0 +1,79 @@
+from collections.abc import Mapping
+from typing import Any
+
+
+class AppError(Exception):
+    status_code = 500
+    code = "INTERNAL_ERROR"
+    title = "服务内部错误"
+
+    def __init__(
+        self,
+        detail: str,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.metadata = dict(metadata or {})
+
+
+class InputError(AppError):
+    status_code = 422
+    code = "INVALID_INPUT"
+    title = "输入不符合要求"
+
+
+class DomainConflictError(AppError):
+    status_code = 409
+    code = "DOMAIN_CONFLICT"
+    title = "当前状态存在冲突"
+
+
+class ProviderError(AppError):
+    status_code = 502
+    code = "PROVIDER_ERROR"
+    title = "外部数据服务错误"
+
+
+class ProviderUnavailableError(ProviderError):
+    status_code = 503
+    code = "PROVIDER_UNAVAILABLE"
+    title = "外部数据服务暂不可用"
+
+
+class ProviderRateLimitedError(ProviderUnavailableError):
+    code = "PROVIDER_RATE_LIMITED"
+    title = "外部数据服务请求受限"
+
+
+class ProviderNotFoundError(ProviderError):
+    status_code = 404
+    code = "PROVIDER_RESOURCE_NOT_FOUND"
+    title = "外部资源不存在"
+
+
+class ProviderInvalidResponseError(ProviderError):
+    code = "PROVIDER_INVALID_RESPONSE"
+    title = "外部数据响应无效"
+
+
+class URLSecurityError(InputError):
+    code = "UNSAFE_PRODUCT_URL"
+    title = "商品链接不安全或不受支持"
+
+
+class LLMError(AppError):
+    status_code = 503
+    code = "LLM_ERROR"
+    title = "模型服务错误"
+
+
+class LLMTimeoutError(LLMError):
+    code = "LLM_TIMEOUT"
+    title = "模型服务超时"
+
+
+class StructuredOutputInvalidError(LLMError):
+    code = "LLM_STRUCTURED_OUTPUT_INVALID"
+    title = "模型结构化输出无效"

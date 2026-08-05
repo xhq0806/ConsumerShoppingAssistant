@@ -1,0 +1,21 @@
+{
+  "kind": "success",
+  "payload": {
+    "product": {
+      "external_product_id": "10002",
+      "title": "云杉 S2 合成测试手机",
+      "image_url": null,
+      "brand": null,
+      "category": "手机",
+      "shop_name": "云杉合成数据店",
+      "price": "3599.00",
+      "currency": "CNY",
+      "specifications": {},
+      "after_sales": [],
+      "source": {"provider": "fixture", "source_id": "product-10002", "obtained_at": "2026-07-16T00:00:00Z"}
+    },
+    "skus": [],
+    "missing_fields": ["image_url", "brand", "specifications", "after_sales"],
+    "warnings": ["该合成样本用于验证字段缺失降级"]
+  }
+}
