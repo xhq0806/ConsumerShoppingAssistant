@@ -288,7 +288,10 @@ class ComparisonApplicationService:
             task = await self._required_task(repository, comparison_id, for_update=True)
             submitted_ids = [product.comparison_product_id for product in command.products]
             if task.status is not ComparisonStatus.AWAITING_PRODUCT_CONFIRMATION:
-                if self._matches_current_selection(task, command):
+                if (
+                    task.status is ComparisonStatus.AWAITING_DIMENSION_CONFIRMATION
+                    and self._matches_current_selection(task, command)
+                ):
                     return self._to_view(task)
                 raise DomainConflictError("当前任务状态不允许确认商品")
             validate_confirmation_set({product.id for product in task.products}, submitted_ids)

@@ -2,21 +2,29 @@
 
 面向普通消费者的智能购物决策助手。用户将在后续里程碑中提交 2～3 个候选商品，系统依据商品事实、品牌资料、近期评论和用户偏好生成可解释、可追溯的比较报告。
 
-## 当前状态：M0 工程基础
+## 当前状态：M1-B 对比草稿与商品确认
 
-当前版本仅提供工程底座：
+当前版本已经完成：
 
-- FastAPI API 与健康检查；
-- Celery Worker；
-- PostgreSQL、Redis 与 Docker Compose；
-- Vue 3 + TypeScript 前端骨架；
-- SQLAlchemy Async、Alembic 和 Testcontainers 基线；
-- ProblemDetails 与 trace ID；
-- 淘宝 URL 安全校验；
-- 合成 Fixture Commerce Provider；
-- Fake LLM Gateway 与脱敏审计。
+- M0：FastAPI、Celery、PostgreSQL、Redis、Vue 和 Docker Compose 工程底座；
+- M1-A：16 张业务表、领域规则、Repository 与 `0001 -> 0005` 迁移链；
+- M1-B：创建对比草稿、Fixture 商品解析、任务详情查询、SKU 确认和基础可比性检查；
+- ProblemDetails、trace ID、URL 安全、创建幂等和事务回滚；
+- Fixture Commerce Provider、Fake LLM Gateway 与脱敏审计；
+- 后端完整测试、PostgreSQL 16 迁移生命周期和前端构建的本地质量门禁。
 
-尚未实现真实淘宝 Provider、商品对比业务 API、业务数据表、LangGraph 分析流程和报告页面。
+当前提供以下开发基线 API：
+
+```text
+POST /api/v1/comparisons
+POST /api/v1/comparisons/{comparison_id}/parse
+GET  /api/v1/comparisons/{comparison_id}
+POST /api/v1/comparisons/{comparison_id}/confirm-products
+```
+
+尚未实现商品输入与确认前端、用户偏好、动态维度、评论分析、Celery/LangGraph 业务编排、
+报告页面、用户鉴权和真实淘宝 Provider。M1-B API 只用于本地开发与 Fixture 验证，不应直接
+作为公网生产接口。
 
 ## 合规声明
 
@@ -35,9 +43,9 @@
 
 ```bash
 cp .env.example .env
-docker compose config
-docker compose up --build -d
-docker compose ps
+docker compose -f docker/docker-compose.yml config
+docker compose -f docker/docker-compose.yml up --build -d
+docker compose -f docker/docker-compose.yml ps
 ```
 
 入口：
@@ -50,13 +58,13 @@ docker compose ps
 停止服务：
 
 ```bash
-docker compose down
+docker compose -f docker/docker-compose.yml down
 ```
 
 删除本地数据库与 Redis 卷：
 
 ```bash
-docker compose down -v
+docker compose -f docker/docker-compose.yml down -v
 ```
 
 该命令会删除本地开发数据，请仅在确认后执行。
@@ -71,6 +79,8 @@ python -m pip install -e ".[dev]"
 python -m ruff check .
 python -m ruff format --check .
 python -m mypy src
+python -m pytest -m "not integration"
+python -m pytest -m integration tests/integration/db
 python -m pytest
 alembic upgrade head
 alembic current
@@ -97,4 +107,14 @@ LLM_PROVIDER=fake
 
 Fixture 数据全部为内部合成样本，不来自真实用户或真实淘宝商品。Fake LLM 仅用于验证结构化输出、超时、重试和审计契约。
 
-更完整的开发说明见 [`docs/development.md`](docs/development.md)，淘宝接入结论见 [`docs/spikes/taobao-data-provider.md`](docs/spikes/taobao-data-provider.md)。
+这是个人项目，当前以本地可复现质量门禁作为验收依据，不要求提供远端 CI 成功记录。
+
+Windows 下可一次执行完整门禁：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/verify-local.ps1
+```
+
+更完整的开发说明见 [`docs/development.md`](docs/development.md)，M1-B 验收见
+[`docs/m1b-verification.md`](docs/m1b-verification.md)，淘宝接入结论见
+[`docs/spikes/taobao-data-provider.md`](docs/spikes/taobao-data-provider.md)。

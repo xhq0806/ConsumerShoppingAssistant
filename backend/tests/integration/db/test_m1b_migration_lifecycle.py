@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
 from alembic.runtime.migration import MigrationContext
 from conftest import migrated_postgres
 from sqlalchemy import create_engine
 
 from alembic import command
+
+pytestmark = pytest.mark.integration
 
 
 def test_m1b_upgrade_current_check_downgrade_and_reupgrade() -> None:

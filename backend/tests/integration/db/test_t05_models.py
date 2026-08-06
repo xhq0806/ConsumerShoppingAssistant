@@ -36,7 +36,7 @@ from app.providers.commerce.dto import NormalizedProductUrl, ReviewDTO, SourceRe
 from app.providers.llm.audit import SQLAlchemyLLMAuditSink
 from app.providers.llm.base import LLMAuditEvent, TokenUsage
 
-pytestmark = pytest.mark.asyncio(loop_scope="module")
+pytestmark = [pytest.mark.asyncio(loop_scope="module"), pytest.mark.integration]
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")

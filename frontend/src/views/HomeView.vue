@@ -10,8 +10,8 @@ const appStore = useAppStore()
     <a-card class="hero-card" :bordered="false">
       <a-typography-title>购物决策助手</a-typography-title>
       <a-typography-paragraph>
-        工程基础已进入 {{ appStore.milestone }} 阶段。当前使用合成 Fixture 数据与 Fake LLM，
-        尚未开放真实淘宝数据分析。
+        后端开发基线已进入 {{ appStore.milestone }} 阶段，支持 Fixture 对比草稿、商品解析与
+        SKU 确认。业务前端和真实淘宝数据分析尚未开放。
       </a-typography-paragraph>
       <a-space wrap>
         <a-tag color="blue"><ExperimentOutlined /> Fixture Provider</a-tag>

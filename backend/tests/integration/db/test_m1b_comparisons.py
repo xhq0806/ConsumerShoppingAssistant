@@ -18,6 +18,7 @@ from app.application.comparisons import (
     ProductConfirmation,
 )
 from app.core.config import Settings
+from app.core.errors import DomainConflictError
 from app.domain.comparisons import TaskEventType, TaskStage
 from app.infrastructure.db.comparison_repository import ComparisonRepository
 from app.infrastructure.db.models import ComparisonTask
@@ -126,6 +127,14 @@ async def test_service_create_parse_confirm_and_idempotent_replay(
     created = await service.create_comparison(command, idempotency_key="m1b-test-key")
     replayed = await service.create_comparison(command, idempotency_key="m1b-test-key")
     assert replayed.id == created.id
+
+    with pytest.raises(DomainConflictError):
+        await service.confirm_products(
+            created.id,
+            ConfirmProductsCommand(
+                tuple(ProductConfirmation(product.id, None) for product in created.products)
+            ),
+        )
 
     parsed = await service.parse_products(created.id)
     assert parsed.status == "awaiting_product_confirmation"
