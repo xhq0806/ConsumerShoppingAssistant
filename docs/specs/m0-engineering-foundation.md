@@ -1,7 +1,7 @@
 # M0 工程基础
 
 > 归档日期：2026-08-05
-> 原始 spec：`changes/active/spec.md`
+> 原始 spec：`changes/archive/2026-08-05-m0-engineering-foundation/spec.md`
 > 系统基线：`SYSTEM-SPEC.md`
 > 验收报告：`docs/m0-verification.md`
 

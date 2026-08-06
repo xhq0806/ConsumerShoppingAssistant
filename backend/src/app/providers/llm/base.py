@@ -33,7 +33,7 @@ class StructuredLLMResult(BaseModel, Generic[ResponseT]):
     model: str
     usage: TokenUsage
     latency_ms: int
-    attempts: int
+    attempts: int = Field(ge=1)
     audit_event_id: UUID
 
 
@@ -47,7 +47,7 @@ class LLMAuditEvent(BaseModel):
     prompt_version: str
     status: Literal["success", "error"]
     latency_ms: int
-    attempts: int
+    attempts: int = Field(ge=1)
     usage: TokenUsage
     error_code: str | None = None
 

@@ -1,7 +1,7 @@
 # M0 运行验收报告
 
-> spec：`changes/active/spec.md`
-> tasks：`changes/active/tasks.md`
+> spec：`changes/archive/2026-08-05-m0-engineering-foundation/spec.md`
+> tasks：`changes/archive/2026-08-05-m0-engineering-foundation/tasks.md`
 > 初次验证：2026-07-16
 > 补齐运行验收：2026-08-05
 > 结论：**有条件通过（PASS_WITH_CONCERNS），允许进入 M1**
@@ -133,7 +133,7 @@ SettingsError: error parsing value for field "taobao_allowed_hosts"
 
 验证：14 个相关测试通过，Ruff 和 mypy 通过，Python 3.12 API/Worker 均启动成功。
 
-排查记录：`changes/active/debug-log-2026-08-05-settings-hosts.md`。
+排查记录：`changes/archive/2026-08-05-m0-engineering-foundation/debug-log-2026-08-05-settings-hosts.md`。
 
 ### 2. 容器缺少 Alembic 文件
 

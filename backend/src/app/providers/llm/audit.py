@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 
 from app.core.logging import get_logger
+from app.infrastructure.db.model_run_repository import SQLAlchemyLLMAuditSink
 from app.providers.llm.base import LLMAuditEvent
 
 
@@ -18,3 +19,6 @@ class StructuredLogLLMAuditSink:
             "llm_call",
             **event.model_dump(mode="json"),
         )
+
+
+__all__ = ["InMemoryLLMAuditSink", "SQLAlchemyLLMAuditSink", "StructuredLogLLMAuditSink"]

@@ -34,6 +34,8 @@ async def test_gateway_returns_validated_structured_result_and_audit() -> None:
         Answer,
     )
     assert result.response.status == "ok"
+    assert result.attempts == 1
+    assert sink.events[0].attempts == 1
     assert sink.events[0].status == "success"
     assert sink.events[0].trace_id == "trace-1"
 

@@ -6,3 +6,4 @@
 | 功能 | 文件 | 归档日期 | 涉及模块 |
 |---|---|---|---|
 | M0 工程基础 | [m0-engineering-foundation.md](m0-engineering-foundation.md) | 2026-08-05 | FastAPI、Commerce Provider、LLM Gateway |
+| M1-A 业务数据模型与领域规则 | [m1a-business-data-models.md](m1a-business-data-models.md) | 2026-08-06 | T03/T04/T05、16 表、领域规则、Repository |

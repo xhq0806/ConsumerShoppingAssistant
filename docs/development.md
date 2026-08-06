@@ -62,7 +62,7 @@ alembic current
 alembic check
 ```
 
-M0 的 `0001` 是空迁移，只验证迁移链路。业务表必须等 T03/T05 后再创建。Repository 不自行提交事务，由应用用例或 UnitOfWork 控制提交与回滚。
+`0001` 是 M0 空迁移基线；M1-A 已通过 `0002`～`0004` 创建 16 张 T03/T04/T05 业务表，当前 head 为 `0004`。Repository 不自行提交事务，由应用用例或 UnitOfWork 控制提交与回滚。
 
 ## 前端质量命令
 
