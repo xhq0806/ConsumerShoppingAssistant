@@ -1,0 +1,177 @@
+"""M1-B 对比草稿与商品确认 FastAPI 路由。by AI.Coding"""
+
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Header, status
+
+from app.api.dependencies import get_comparison_service
+from app.api.schemas.comparisons import (
+    ComparabilityWarningResponse,
+    ComparisonCreateRequest,
+    ComparisonDetailResponse,
+    ComparisonProductResponse,
+    ComparisonSummaryResponse,
+    ConfirmProductsRequest,
+    ProductSkuResponse,
+    ProductSnapshotResponse,
+    TaskEventResponse,
+)
+from app.application.comparisons import (
+    ComparisonApplicationService,
+    ComparisonView,
+    ConfirmProductsCommand,
+    CreateComparisonCommand,
+    ProductConfirmation,
+    ProductView,
+)
+
+router = APIRouter(prefix="/api/v1/comparisons", tags=["comparisons"])
+
+
+@router.post(
+    "",
+    response_model=ComparisonSummaryResponse,
+    status_code=status.HTTP_201_CREATED,
+    operation_id="create_comparison",
+)
+async def create_comparison(
+    request: ComparisonCreateRequest,
+    service: Annotated[ComparisonApplicationService, Depends(get_comparison_service)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> ComparisonSummaryResponse:
+    """创建安全规范化后的对比草稿或返回幂等重放摘要。by AI.Coding"""
+    # 路由仅转换 HTTP 契约，不直接访问 session、提交事务或调用 Provider。
+    view = await service.create_comparison(
+        CreateComparisonCommand(tuple(request.product_urls), request.review_window_days),
+        idempotency_key=idempotency_key,
+    )
+    return _summary_response(view)
+
+
+@router.post(
+    "/{comparison_id}/parse",
+    response_model=ComparisonDetailResponse,
+    operation_id="parse_comparison_products",
+)
+async def parse_comparison_products(
+    comparison_id: UUID,
+    service: Annotated[ComparisonApplicationService, Depends(get_comparison_service)],
+) -> ComparisonDetailResponse:
+    """同步启动 Fixture 商品解析并返回当前聚合详情。by AI.Coding"""
+    # 解析的事务分段、Provider 调用和失败留痕全部由 application service 管理。
+    return _detail_response(await service.parse_products(comparison_id))
+
+
+@router.get(
+    "/{comparison_id}",
+    response_model=ComparisonDetailResponse,
+    operation_id="get_comparison",
+)
+async def get_comparison(
+    comparison_id: UUID,
+    service: Annotated[ComparisonApplicationService, Depends(get_comparison_service)],
+) -> ComparisonDetailResponse:
+    """查询单个未删除对比任务的白名单聚合详情。by AI.Coding"""
+    # 响应 mapper 排除原始 URL、Provider payload 与内部错误内容。
+    return _detail_response(await service.get_comparison(comparison_id))
+
+
+@router.post(
+    "/{comparison_id}/confirm-products",
+    response_model=ComparisonDetailResponse,
+    operation_id="confirm_comparison_products",
+)
+async def confirm_comparison_products(
+    comparison_id: UUID,
+    request: ConfirmProductsRequest,
+    service: Annotated[ComparisonApplicationService, Depends(get_comparison_service)],
+) -> ComparisonDetailResponse:
+    """原子确认全部候选商品的 SKU 并进行基础可比性检查。by AI.Coding"""
+    # 将 API schema 映射为框架无关 command，领域失败统一交给 ProblemDetails handler。
+    command = ConfirmProductsCommand(
+        tuple(
+            ProductConfirmation(item.comparison_product_id, item.selected_sku_id)
+            for item in request.products
+        )
+    )
+    return _detail_response(await service.confirm_products(comparison_id, command))
+
+
+def _summary_response(view: ComparisonView) -> ComparisonSummaryResponse:
+    """将应用摘要视图显式映射为创建端点响应。by AI.Coding"""
+    # 共享候选 mapper 保证创建和详情端点不会意外暴露不同字段。
+    return ComparisonSummaryResponse(
+        id=view.id,
+        status=view.status,
+        review_window_days=view.review_window_days,
+        progress=view.progress,
+        products=[_product_response(product) for product in view.products],
+    )
+
+
+def _detail_response(view: ComparisonView) -> ComparisonDetailResponse:
+    """将应用详情视图显式映射为详情端点响应。by AI.Coding"""
+    summary = _summary_response(view)
+    return ComparisonDetailResponse(
+        **summary.model_dump(),
+        events=[
+            TaskEventResponse(
+                id=event.id,
+                stage=event.stage,
+                event_type=event.event_type,
+                progress=event.progress,
+                message=event.message,
+                details=event.details,
+                created_at=event.created_at,
+            )
+            for event in view.events
+        ],
+        warnings=[
+            ComparabilityWarningResponse(code=warning.code, message=warning.message)
+            for warning in view.warnings
+        ],
+    )
+
+
+def _product_response(product: ProductView) -> ComparisonProductResponse:
+    """将候选商品应用视图转换为 API schema。by AI.Coding"""
+    # 显式逐层列举字段，避免 ORM 或 dataclass 自动序列化泄露未来新增字段。
+    snapshot = product.latest_snapshot
+    snapshot_response = None
+    if snapshot is not None:
+        snapshot_response = ProductSnapshotResponse(
+            id=snapshot.id,
+            title=snapshot.title,
+            image_url=snapshot.image_url,
+            brand=snapshot.brand,
+            category=snapshot.category,
+            shop_name=snapshot.shop_name,
+            price=snapshot.price,
+            currency=snapshot.currency,
+            specifications=snapshot.specifications,
+            after_sales=snapshot.after_sales,
+            source_provider=snapshot.source_provider,
+            source_id=snapshot.source_id,
+            captured_at=snapshot.captured_at,
+        )
+    return ComparisonProductResponse(
+        id=product.id,
+        position=product.position,
+        platform=product.platform,
+        external_product_id=product.external_product_id,
+        parse_status=product.parse_status,
+        selected_sku_id=product.selected_sku_id,
+        latest_snapshot=snapshot_response,
+        skus=[
+            ProductSkuResponse(
+                id=sku.id,
+                external_sku_id=sku.external_sku_id,
+                name=sku.name,
+                attributes=sku.attributes,
+                price=sku.price,
+                selectable=sku.selectable,
+            )
+            for sku in product.skus
+        ],
+    )

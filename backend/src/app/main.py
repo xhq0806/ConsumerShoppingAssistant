@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.comparisons import router as comparisons_router
 from app.api.exception_handlers import register_exception_handlers
 from app.api.health import router as health_router
 from app.api.middleware import TraceIdMiddleware
@@ -29,6 +30,7 @@ def create_app() -> FastAPI:
     application.add_middleware(TraceIdMiddleware)
     register_exception_handlers(application)
     application.include_router(health_router)
+    application.include_router(comparisons_router)
     return application
 
 

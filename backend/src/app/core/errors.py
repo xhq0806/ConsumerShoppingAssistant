@@ -30,6 +30,14 @@ class DomainConflictError(AppError):
     title = "当前状态存在冲突"
 
 
+class ResourceNotFoundError(AppError):
+    """表示对外可安全暴露的资源不存在错误。by AI.Coding"""
+
+    status_code = 404
+    code = "RESOURCE_NOT_FOUND"
+    title = "资源不存在"
+
+
 class ProviderError(AppError):
     status_code = 502
     code = "PROVIDER_ERROR"

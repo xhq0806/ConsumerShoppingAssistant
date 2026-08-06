@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.domain.comparisons import ComparisonStatus
+from app.domain.comparisons import ComparisonStatus, TaskEventType, TaskStage
 from app.infrastructure.db.models import (
     ComparisonProduct,
     ComparisonTask,
@@ -56,12 +58,28 @@ class ComparisonRepository(Repository[ComparisonTask]):
         self._session.add(model)
         return model
 
-    async def get_detail(self, comparison_id: uuid.UUID) -> ComparisonTask | None:
-        """载入任务及其商品、SKU、快照和事件。by AI.Coding"""
-        # 使用 selectinload 避免异步环境中的隐式懒加载。
+    async def get_detail(
+        self, comparison_id: uuid.UUID, *, for_update: bool = False
+    ) -> ComparisonTask | None:
+        """载入任务聚合，并在写用例中仅锁定任务根记录。by AI.Coding"""
+        # 根记录锁在关系预加载前生效，避免依赖 selectinload 子查询的隐式锁语义。
+        statement = select(ComparisonTask).where(ComparisonTask.id == comparison_id)
+        if for_update:
+            statement = statement.with_for_update()
+        statement = statement.options(
+            selectinload(ComparisonTask.products).selectinload(ComparisonProduct.skus),
+            selectinload(ComparisonTask.products).selectinload(ComparisonProduct.snapshots),
+            selectinload(ComparisonTask.events),
+        )
+        result = await self._session.execute(statement)
+        return result.unique().scalars().one_or_none()
+
+    async def get_by_idempotency_hash(self, idempotency_key_hash: str) -> ComparisonTask | None:
+        """按不可逆创建幂等摘要读取已存在任务。by AI.Coding"""
+        # 查询不接受原始 key，避免仓储接口诱导调用方记录敏感调用标识。
         statement = (
             select(ComparisonTask)
-            .where(ComparisonTask.id == comparison_id)
+            .where(ComparisonTask.idempotency_key_hash == idempotency_key_hash)
             .options(
                 selectinload(ComparisonTask.products).selectinload(ComparisonProduct.skus),
                 selectinload(ComparisonTask.products).selectinload(ComparisonProduct.snapshots),
@@ -70,6 +88,29 @@ class ComparisonRepository(Repository[ComparisonTask]):
         )
         result = await self._session.scalars(statement)
         return result.one_or_none()
+
+    def add_event(
+        self,
+        *,
+        comparison_id: uuid.UUID,
+        stage: TaskStage,
+        event_type: TaskEventType,
+        progress: int | None,
+        message: str | None,
+        details: Mapping[str, Any],
+    ) -> TaskEvent:
+        """写入由调用方提供的脱敏任务事件且不提交事务。by AI.Coding"""
+        # 事件字段由 application service 提供受控内容，仓储只负责构造与加入会话。
+        event = TaskEvent(
+            comparison_id=comparison_id,
+            stage=stage,
+            event_type=event_type,
+            progress=progress,
+            message=message,
+            details=dict(details),
+        )
+        self._session.add(event)
+        return event
 
     async def list_by_status(self, status: ComparisonStatus) -> list[ComparisonTask]:
         """按创建时间倒序查询指定状态任务。by AI.Coding"""

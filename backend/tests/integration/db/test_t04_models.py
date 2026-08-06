@@ -37,8 +37,8 @@ pytestmark = pytest.mark.asyncio(loop_scope="module")
 async def migrated_database() -> AsyncIterator[
     tuple[async_sessionmaker[AsyncSession], Config, str]
 ]:
-    """使用共享隔离夹具启动 PostgreSQL 并迁移到 0003。by AI.Coding"""
-    with migrated_postgres("0003") as database:
+    """使用共享隔离夹具启动 PostgreSQL 并迁移到当前 head。by AI.Coding"""
+    with migrated_postgres("head") as database:
         engine = create_async_engine(database.async_url)
         yield (
             async_sessionmaker(engine, expire_on_commit=False),

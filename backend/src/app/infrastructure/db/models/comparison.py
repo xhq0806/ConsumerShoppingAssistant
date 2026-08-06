@@ -63,6 +63,16 @@ class ComparisonTask(TimestampMixin, Base):
         ),
         CheckConstraint("review_window_days IN (30, 60)", name="review_window_days"),
         CheckConstraint("progress BETWEEN 0 AND 100", name="progress"),
+        CheckConstraint(
+            "(idempotency_key_hash IS NULL) = (create_request_fingerprint IS NULL)",
+            name="idempotency_fields_paired",
+        ),
+        Index(
+            "uq_comparison_tasks_idempotency_key_hash_not_null",
+            "idempotency_key_hash",
+            unique=True,
+            postgresql_where="idempotency_key_hash IS NOT NULL",
+        ),
         Index("ix_comparison_tasks_status_created_at", "status", "created_at"),
     )
 
@@ -84,6 +94,8 @@ class ComparisonTask(TimestampMixin, Base):
     partial_result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     error_code: Mapped[str | None] = mapped_column(String(100))
     error_message: Mapped[str | None] = mapped_column(String(500))
+    idempotency_key_hash: Mapped[str | None] = mapped_column(String(64))
+    create_request_fingerprint: Mapped[str | None] = mapped_column(String(64))
 
     products: Mapped[list[ComparisonProduct]] = relationship(
         back_populates="comparison", cascade="all, delete-orphan", passive_deletes=True
@@ -120,9 +132,13 @@ class ComparisonTask(TimestampMixin, Base):
         partial_result: dict[str, Any] | None = None,
         error_code: str | None = None,
         error_message: str | None = None,
+        idempotency_key_hash: str | None = None,
+        create_request_fingerprint: str | None = None,
     ) -> None:
         """仅以 draft 初始化新任务；SQLAlchemy 数据库装载会绕过此构造器。by AI.Coding"""
         # 显式赋值确保新实例立即拥有状态，并由同一 validator 拒绝非 draft 初态。
+        if (idempotency_key_hash is None) != (create_request_fingerprint is None):
+            raise ValueError("幂等摘要和请求指纹必须同时为空或同时存在")
         self.status = ComparisonStatus(status)
         self.review_window_days = review_window_days
         self.preferences = {} if preferences is None else preferences
@@ -130,6 +146,8 @@ class ComparisonTask(TimestampMixin, Base):
         self.partial_result = partial_result
         self.error_code = error_code
         self.error_message = error_message
+        self.idempotency_key_hash = idempotency_key_hash
+        self.create_request_fingerprint = create_request_fingerprint
 
     @validates("status")
     def _validate_status(self, _key: str, value: ComparisonStatus | str) -> ComparisonStatus:
