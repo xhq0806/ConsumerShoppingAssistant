@@ -2,16 +2,17 @@
 
 面向普通消费者的智能购物决策助手。用户将在后续里程碑中提交 2～3 个候选商品，系统依据商品事实、品牌资料、近期评论和用户偏好生成可解释、可追溯的比较报告。
 
-## 当前状态：M1-B 对比草稿与商品确认
+## 当前状态：M1-C 商品输入与用户偏好闭环
 
 当前版本已经完成：
 
 - M0：FastAPI、Celery、PostgreSQL、Redis、Vue 和 Docker Compose 工程底座；
 - M1-A：16 张业务表、领域规则、Repository 与 `0001 -> 0005` 迁移链；
 - M1-B：创建对比草稿、Fixture 商品解析、任务详情查询、SKU 确认和基础可比性检查；
+- M1-C：商品链接输入、解析与确认页面，以及预算、使用场景、关注点和禁忌项的保存与恢复；
 - ProblemDetails、trace ID、URL 安全、创建幂等和事务回滚；
 - Fixture Commerce Provider、Fake LLM Gateway 与脱敏审计；
-- 后端完整测试、PostgreSQL 16 迁移生命周期和前端构建的本地质量门禁。
+- 前后端完整测试、PostgreSQL 16 迁移生命周期、响应式页面和 Docker Compose 本地质量门禁。
 
 当前提供以下开发基线 API：
 
@@ -20,11 +21,12 @@ POST /api/v1/comparisons
 POST /api/v1/comparisons/{comparison_id}/parse
 GET  /api/v1/comparisons/{comparison_id}
 POST /api/v1/comparisons/{comparison_id}/confirm-products
+PUT  /api/v1/comparisons/{comparison_id}/preferences
 ```
 
-尚未实现商品输入与确认前端、用户偏好、动态维度、评论分析、Celery/LangGraph 业务编排、
-报告页面、用户鉴权和真实淘宝 Provider。M1-B API 只用于本地开发与 Fixture 验证，不应直接
-作为公网生产接口。
+Web 入口提供 `/`、`/comparisons/:id/confirm` 和 `/comparisons/:id/preferences` 三步流程。
+尚未实现动态维度、评论分析、Celery/LangGraph 业务编排、报告页面、用户鉴权和真实淘宝
+Provider。当前 API 与页面只用于本地开发和 Fixture 验证，不应直接作为公网生产服务。
 
 ## 合规声明
 
@@ -115,6 +117,6 @@ Windows 下可一次执行完整门禁：
 powershell -ExecutionPolicy Bypass -File scripts/verify-local.ps1
 ```
 
-更完整的开发说明见 [`docs/development.md`](docs/development.md)，M1-B 验收见
-[`docs/m1b-verification.md`](docs/m1b-verification.md)，淘宝接入结论见
+更完整的开发说明见 [`docs/development.md`](docs/development.md)，M1-C 验收见
+[`docs/m1c-verification.md`](docs/m1c-verification.md)，淘宝接入结论见
 [`docs/spikes/taobao-data-provider.md`](docs/spikes/taobao-data-provider.md)。

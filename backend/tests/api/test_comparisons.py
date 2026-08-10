@@ -1,5 +1,6 @@
 """M1-B 对比 API 契约和依赖替换测试。by AI.Coding"""
 
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -11,7 +12,9 @@ from app.application.comparisons import (
     ComparisonView,
     CreateComparisonCommand,
     ProductView,
+    UpdatePreferencesCommand,
 )
+from app.domain.comparisons.preferences import UserPreferences
 from app.main import create_app
 
 
@@ -21,6 +24,7 @@ class _FakeComparisonService:
     def __init__(self) -> None:
         """初始化用于断言路由映射结果的调用记录。by AI.Coding"""
         self.created: tuple[CreateComparisonCommand, str | None] | None = None
+        self.updated_preferences: UpdatePreferencesCommand | None = None
         self.comparison_id = uuid4()
 
     async def create_comparison(
@@ -43,7 +47,22 @@ class _FakeComparisonService:
         """返回最小详情以覆盖确认路由注册。by AI.Coding"""
         return self._view()
 
-    def _view(self) -> ComparisonView:
+    async def update_preferences(
+        self, _comparison_id: object, command: UpdatePreferencesCommand
+    ) -> ComparisonView:
+        """记录偏好替换命令并返回带规范化偏好的详情。by AI.Coding"""
+        self.updated_preferences = command
+        return self._view(
+            preferences=UserPreferences.create(
+                budget_min=command.budget_min,
+                budget_max=command.budget_max,
+                usage_scenarios=command.usage_scenarios,
+                priority_concerns=command.priority_concerns,
+                deal_breakers=command.deal_breakers,
+            )
+        )
+
+    def _view(self, *, preferences: UserPreferences | None = None) -> ComparisonView:
         """构造无敏感字段的稳定应用视图。by AI.Coding"""
         # 固定空事件与快照，专注 API 路由而不复制领域或数据库测试职责。
         return ComparisonView(
@@ -74,6 +93,7 @@ class _FakeComparisonService:
                 ),
             ),
             events=(),
+            preferences=preferences,
         )
 
 
@@ -154,4 +174,70 @@ async def test_comparison_routes_forbid_extra_input_and_publish_operation_ids(
         "parse_comparison_products",
         "get_comparison",
         "confirm_comparison_products",
+        "update_comparison_preferences",
     } <= operation_ids
+
+
+@pytest.mark.asyncio
+async def test_update_preferences_contract_maps_decimal_and_text_collections(
+    comparison_app: tuple[FastAPI, _FakeComparisonService],
+) -> None:
+    """偏好接口应映射金额、文本集合并返回稳定恢复结构。by AI.Coding"""
+    application, fake_service = comparison_app
+    async with AsyncClient(
+        transport=ASGITransport(app=application), base_url="http://test"
+    ) as client:
+        response = await client.put(
+            f"/api/v1/comparisons/{fake_service.comparison_id}/preferences",
+            json={
+                "review_window_days": 60,
+                "budget_min": "3000.00",
+                "budget_max": "4500.00",
+                "usage_scenarios": ["日常通勤", "旅行拍照"],
+                "priority_concerns": ["续航", "拍照"],
+                "deal_breakers": ["机身过重"],
+            },
+        )
+
+    assert response.status_code == 200
+    assert fake_service.updated_preferences == UpdatePreferencesCommand(
+        review_window_days=60,
+        budget_min=Decimal("3000.00"),
+        budget_max=Decimal("4500.00"),
+        usage_scenarios=("日常通勤", "旅行拍照"),
+        priority_concerns=("续航", "拍照"),
+        deal_breakers=("机身过重",),
+    )
+    assert response.json()["preferences"] == {
+        "budget_min": "3000.00",
+        "budget_max": "4500.00",
+        "usage_scenarios": ["日常通勤", "旅行拍照"],
+        "priority_concerns": ["续航", "拍照"],
+        "deal_breakers": ["机身过重"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_update_preferences_normalizes_before_text_and_count_limits(
+    comparison_app: tuple[FastAPI, _FakeComparisonService],
+) -> None:
+    """HTTP 层不得在领域规范化前误拒绝可折叠空白和重复文本。by AI.Coding"""
+    application, fake_service = comparison_app
+    raw_scenario = f"通勤{' ' * 100}拍照"
+    async with AsyncClient(
+        transport=ASGITransport(app=application), base_url="http://test"
+    ) as client:
+        response = await client.put(
+            f"/api/v1/comparisons/{fake_service.comparison_id}/preferences",
+            json={
+                "review_window_days": 30,
+                "budget_min": None,
+                "budget_max": "4500.00",
+                "usage_scenarios": [raw_scenario] * 6,
+                "priority_concerns": ["续航"],
+                "deal_breakers": [],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["preferences"]["usage_scenarios"] == ["通勤 拍照"]

@@ -15,6 +15,7 @@ frontend/node_modules/
 frontend/dist/
 playwright-report/
 test-results/
+.playwright-cli/
 .vscode/
 .idea/
 .DS_Store

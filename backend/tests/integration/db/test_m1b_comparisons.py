@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from decimal import Decimal
 
 import pytest
 import pytest_asyncio
@@ -16,6 +17,7 @@ from app.application.comparisons import (
     ConfirmProductsCommand,
     CreateComparisonCommand,
     ProductConfirmation,
+    UpdatePreferencesCommand,
 )
 from app.core.config import Settings
 from app.core.errors import DomainConflictError
@@ -135,6 +137,18 @@ async def test_service_create_parse_confirm_and_idempotent_replay(
                 tuple(ProductConfirmation(product.id, None) for product in created.products)
             ),
         )
+    with pytest.raises(DomainConflictError):
+        await service.update_preferences(
+            created.id,
+            UpdatePreferencesCommand(
+                review_window_days=30,
+                budget_min=None,
+                budget_max=Decimal("4500.00"),
+                usage_scenarios=("日常通勤",),
+                priority_concerns=("续航",),
+                deal_breakers=(),
+            ),
+        )
 
     parsed = await service.parse_products(created.id)
     assert parsed.status == "awaiting_product_confirmation"
@@ -155,3 +169,45 @@ async def test_service_create_parse_confirm_and_idempotent_replay(
     assert [product.selected_sku_id for product in confirmed.products] == [
         None if not product.skus else product.skus[0].id for product in parsed.products
     ]
+
+    updated = await service.update_preferences(
+        created.id,
+        UpdatePreferencesCommand(
+            review_window_days=60,
+            budget_min=Decimal("3000.00"),
+            budget_max=Decimal("4500.00"),
+            usage_scenarios=("日常通勤", "旅行拍照"),
+            priority_concerns=("续航", "拍照"),
+            deal_breakers=("机身过重",),
+        ),
+    )
+    assert updated.review_window_days == 60
+    assert updated.preferences is not None
+    assert updated.preferences.budget_max == Decimal("4500.00")
+    assert updated.preferences.usage_scenarios == ("日常通勤", "旅行拍照")
+    preference_event = updated.events[-1]
+    assert preference_event.stage == "dimension_confirmation"
+    assert preference_event.event_type == "info"
+    assert preference_event.message == "用户偏好已保存。"
+    assert preference_event.details == {
+        "review_window_days": 60,
+        "usage_scenario_count": 2,
+        "priority_concern_count": 2,
+        "deal_breaker_count": 1,
+    }
+    event_count = len(updated.events)
+
+    replayed_preferences = await service.update_preferences(
+        created.id,
+        UpdatePreferencesCommand(
+            review_window_days=60,
+            budget_min=Decimal("3000.00"),
+            budget_max=Decimal("4500.00"),
+            usage_scenarios=("日常通勤", "旅行拍照"),
+            priority_concerns=("续航", "拍照"),
+            deal_breakers=("机身过重",),
+        ),
+    )
+    reloaded = await service.get_comparison(created.id)
+    assert len(replayed_preferences.events) == event_count
+    assert reloaded.preferences == updated.preferences

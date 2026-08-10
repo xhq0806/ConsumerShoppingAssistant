@@ -1,0 +1,136 @@
+// M1-C 对比任务跨页面状态与服务端恢复入口。by AI.Coding
+
+import { computed, ref } from 'vue'
+import { defineStore } from 'pinia'
+import {
+  confirmComparisonProducts,
+  createComparison,
+  getComparison,
+  parseComparison,
+  updateComparisonPreferences,
+  type ComparisonDetail,
+  type ConfirmProductsPayload,
+  type CreateComparisonPayload,
+  type UpdatePreferencesPayload,
+} from '@/api/comparisons'
+import { ApiError } from '@/api/request'
+
+const LAST_COMPARISON_KEY = 'shopping-assistant:last-comparison-id'
+
+type ComparisonAction = 'creating' | 'parsing' | 'loading' | 'confirming' | 'saving'
+
+export const useComparisonStore = defineStore('comparison', () => {
+  /** 管理当前任务详情、请求状态和仅含任务 ID 的恢复提示。by AI.Coding */
+  const comparison = ref<ComparisonDetail | null>(null)
+  const action = ref<ComparisonAction | null>(null)
+  const error = ref<ApiError | null>(null)
+  const lastComparisonId = ref(localStorage.getItem(LAST_COMPARISON_KEY))
+  const busy = computed(() => action.value !== null)
+
+  async function createAndParse(payload: CreateComparisonPayload): Promise<ComparisonDetail> {
+    /** 创建草稿后立即解析，并在解析失败时保留已创建任务供恢复。by AI.Coding */
+    error.value = null
+    action.value = 'creating'
+    try {
+      const created = await createComparison(payload, crypto.randomUUID())
+      comparison.value = created
+      rememberComparison(created.id)
+      action.value = 'parsing'
+      const parsed = await parseComparison(created.id)
+      comparison.value = parsed
+      return parsed
+    } catch (cause) {
+      error.value = normalizeError(cause)
+      throw error.value
+    } finally {
+      action.value = null
+    }
+  }
+
+  async function loadComparison(comparisonId: string): Promise<ComparisonDetail> {
+    /** 按路由任务 ID 重新加载详情，页面刷新不依赖 Pinia 内存。by AI.Coding */
+    error.value = null
+    action.value = 'loading'
+    try {
+      const loaded = await getComparison(comparisonId)
+      comparison.value = loaded
+      rememberComparison(loaded.id)
+      return loaded
+    } catch (cause) {
+      error.value = normalizeError(cause)
+      throw error.value
+    } finally {
+      action.value = null
+    }
+  }
+
+  async function confirmProducts(
+    comparisonId: string,
+    payload: ConfirmProductsPayload,
+  ): Promise<ComparisonDetail> {
+    /** 原子提交全部商品选择并更新当前聚合。by AI.Coding */
+    error.value = null
+    action.value = 'confirming'
+    try {
+      const confirmed = await confirmComparisonProducts(comparisonId, payload)
+      comparison.value = confirmed
+      return confirmed
+    } catch (cause) {
+      error.value = normalizeError(cause)
+      throw error.value
+    } finally {
+      action.value = null
+    }
+  }
+
+  async function savePreferences(
+    comparisonId: string,
+    payload: UpdatePreferencesPayload,
+  ): Promise<ComparisonDetail> {
+    /** 保存整体偏好并保留服务端规范化后的恢复结构。by AI.Coding */
+    error.value = null
+    action.value = 'saving'
+    try {
+      const updated = await updateComparisonPreferences(comparisonId, payload)
+      comparison.value = updated
+      return updated
+    } catch (cause) {
+      error.value = normalizeError(cause)
+      throw error.value
+    } finally {
+      action.value = null
+    }
+  }
+
+  function clearError(): void {
+    /** 清除页面已展示的请求错误。by AI.Coding */
+    error.value = null
+  }
+
+  function rememberComparison(comparisonId: string): void {
+    /** 只持久化任务 ID，不把原始商品链接或偏好正文写入浏览器缓存。by AI.Coding */
+    lastComparisonId.value = comparisonId
+    localStorage.setItem(LAST_COMPARISON_KEY, comparisonId)
+  }
+
+  return {
+    comparison,
+    action,
+    error,
+    busy,
+    lastComparisonId,
+    createAndParse,
+    loadComparison,
+    confirmProducts,
+    savePreferences,
+    clearError,
+  }
+})
+
+function normalizeError(cause: unknown): ApiError {
+  /** 把未知前端异常收敛为页面可显示的 ApiError。by AI.Coding */
+  if (cause instanceof ApiError) {
+    return cause
+  }
+  return new ApiError('操作失败，请稍后重试。', 0, 'CLIENT_ERROR', null)
+}

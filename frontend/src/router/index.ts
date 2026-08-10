@@ -1,7 +1,22 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import HomeView from '@/views/HomeView.vue'
 
 export default createRouter({
   history: createWebHistory(),
-  routes: [{ path: '/', name: 'home', component: HomeView }],
+  routes: [
+    {
+      path: '/',
+      name: 'comparison-input',
+      component: () => import('@/views/comparisons/InputView.vue'),
+    },
+    {
+      path: '/comparisons/:id/confirm',
+      name: 'comparison-confirm',
+      component: () => import('@/views/comparisons/ConfirmProductsView.vue'),
+    },
+    {
+      path: '/comparisons/:id/preferences',
+      name: 'comparison-preferences',
+      component: () => import('@/views/comparisons/PreferencesView.vue'),
+    },
+  ],
 })

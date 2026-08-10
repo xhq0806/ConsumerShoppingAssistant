@@ -16,6 +16,8 @@ from app.api.schemas.comparisons import (
     ProductSkuResponse,
     ProductSnapshotResponse,
     TaskEventResponse,
+    UpdatePreferencesRequest,
+    UserPreferencesResponse,
 )
 from app.application.comparisons import (
     ComparisonApplicationService,
@@ -24,6 +26,7 @@ from app.application.comparisons import (
     CreateComparisonCommand,
     ProductConfirmation,
     ProductView,
+    UpdatePreferencesCommand,
 )
 
 router = APIRouter(prefix="/api/v1/comparisons", tags=["comparisons"])
@@ -98,6 +101,29 @@ async def confirm_comparison_products(
     return _detail_response(await service.confirm_products(comparison_id, command))
 
 
+@router.put(
+    "/{comparison_id}/preferences",
+    response_model=ComparisonDetailResponse,
+    operation_id="update_comparison_preferences",
+)
+async def update_comparison_preferences(
+    comparison_id: UUID,
+    request: UpdatePreferencesRequest,
+    service: Annotated[ComparisonApplicationService, Depends(get_comparison_service)],
+) -> ComparisonDetailResponse:
+    """整体替换已确认任务的评论窗口和购买偏好。by AI.Coding"""
+    # API 只负责类型映射，文本规范化、状态门禁和事务均由应用服务处理。
+    command = UpdatePreferencesCommand(
+        review_window_days=request.review_window_days,
+        budget_min=request.budget_min,
+        budget_max=request.budget_max,
+        usage_scenarios=tuple(request.usage_scenarios),
+        priority_concerns=tuple(request.priority_concerns),
+        deal_breakers=tuple(request.deal_breakers),
+    )
+    return _detail_response(await service.update_preferences(comparison_id, command))
+
+
 def _summary_response(view: ComparisonView) -> ComparisonSummaryResponse:
     """将应用摘要视图显式映射为创建端点响应。by AI.Coding"""
     # 共享候选 mapper 保证创建和详情端点不会意外暴露不同字段。
@@ -107,6 +133,7 @@ def _summary_response(view: ComparisonView) -> ComparisonSummaryResponse:
         review_window_days=view.review_window_days,
         progress=view.progress,
         products=[_product_response(product) for product in view.products],
+        preferences=_preferences_response(view),
     )
 
 
@@ -174,4 +201,17 @@ def _product_response(product: ProductView) -> ComparisonProductResponse:
             )
             for sku in product.skus
         ],
+    )
+
+
+def _preferences_response(view: ComparisonView) -> UserPreferencesResponse | None:
+    """将可空领域偏好转换为 API 恢复结构。by AI.Coding"""
+    if view.preferences is None:
+        return None
+    return UserPreferencesResponse(
+        budget_min=view.preferences.budget_min,
+        budget_max=view.preferences.budget_max,
+        usage_scenarios=list(view.preferences.usage_scenarios),
+        priority_concerns=list(view.preferences.priority_concerns),
+        deal_breakers=list(view.preferences.deal_breakers),
     )

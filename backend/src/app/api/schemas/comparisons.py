@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -34,6 +34,30 @@ class ConfirmProductsRequest(_StrictSchema):
     """定义必须覆盖全部候选商品的确认请求体。by AI.Coding"""
 
     products: list[ProductConfirmationInput] = Field(min_length=2, max_length=3)
+
+
+PreferenceText = Annotated[str, Field(min_length=1)]
+
+
+class UpdatePreferencesRequest(_StrictSchema):
+    """定义评论窗口和用户购买偏好的整体替换请求。by AI.Coding"""
+
+    review_window_days: Literal[30, 60]
+    budget_min: Decimal | None = Field(default=None, ge=0, le=1_000_000, decimal_places=2)
+    budget_max: Decimal | None = Field(default=None, ge=0, le=1_000_000, decimal_places=2)
+    usage_scenarios: list[PreferenceText] = Field(min_length=1)
+    priority_concerns: list[PreferenceText] = Field(min_length=1)
+    deal_breakers: list[PreferenceText] = Field(default_factory=list)
+
+
+class UserPreferencesResponse(_StrictSchema):
+    """定义可恢复的规范化用户偏好响应。by AI.Coding"""
+
+    budget_min: Decimal | None
+    budget_max: Decimal | None
+    usage_scenarios: list[str]
+    priority_concerns: list[str]
+    deal_breakers: list[str]
 
 
 class ProductSkuResponse(_StrictSchema):
@@ -105,6 +129,7 @@ class ComparisonSummaryResponse(_StrictSchema):
     review_window_days: int
     progress: int
     products: list[ComparisonProductResponse]
+    preferences: UserPreferencesResponse | None
 
 
 class ComparisonDetailResponse(ComparisonSummaryResponse):

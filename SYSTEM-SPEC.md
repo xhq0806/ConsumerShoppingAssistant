@@ -1,13 +1,14 @@
 # Consumer Shopping Assistant — 系统行为规格
 
-> 最后更新：2026-08-06
-> 当前版本：v0.3.0-m1b
+> 最后更新：2026-08-10
+> 当前版本：v0.4.0-m1c
 > 维护方式：仅记录已经实现并经过验证的系统行为；计划能力不得提前写入本文件
 > M0 验收：`docs/m0-verification.md`（PASS_WITH_CONCERNS）
 > M1-A 验收：`docs/m1a-verification.md`（PASS_WITH_CONCERNS）
 > M1-B 验收：`docs/m1b-verification.md`（PASS）
+> M1-C 验收：`docs/m1c-verification.md`（PASS）
 > 验收方式：个人项目以可复现的本地完整质量门禁作为交付证据，不要求远端 CI 成功记录
-> 验收证据：M0 见 `docs/m0-verification.md`；M1-A 见 `docs/m1a-verification.md`；M1-B 见 `docs/m1b-verification.md`
+> 验收证据：M0 见 `docs/m0-verification.md`；M1-A 见 `docs/m1a-verification.md`；M1-B 见 `docs/m1b-verification.md`；M1-C 见 `docs/m1c-verification.md`
 
 ## 1. 功能清单
 
@@ -21,6 +22,8 @@
 | T05 评论、指标、报告与模型审计模型 | v0.2.0-m1a | ✅ 已实现 | 2026-08-06 | `docs/specs/m1a-business-data-models.md` |
 | T11 对比草稿、Fixture 解析与详情查询 | v0.3.0-m1b | ✅ 已实现 | 2026-08-06 | `docs/specs/comparison-draft-confirmation.md` |
 | T12 商品/SKU 确认与基础可比性 | v0.3.0-m1b | ✅ 已实现 | 2026-08-06 | `docs/specs/comparison-draft-confirmation.md` |
+| T26 商品输入、解析与确认前端 | v0.4.0-m1c | ✅ 已实现 | 2026-08-10 | `docs/specs/m1c-shopping-input-preferences.md` |
+| T13 用户偏好保存与恢复 | v0.4.0-m1c | ✅ 已实现 | 2026-08-10 | `docs/specs/m1c-shopping-input-preferences.md` |
 | 淘宝商品 URL 安全 | v0.1.0-m0 | ✅ 已实现 | 2026-08-05 | `docs/specs/m0-engineering-foundation.md` |
 | Commerce Provider 与 Fixture | v0.1.0-m0 | ✅ 已实现 | 2026-08-05 | `docs/specs/m0-engineering-foundation.md` |
 | 供应商中立 LLM Gateway | v0.1.0-m0 | ✅ 已实现 | 2026-08-05 | `docs/specs/m0-engineering-foundation.md` |
@@ -29,16 +32,14 @@
 
 ## 2. 系统定位与当前边界
 
-当前系统是购物决策助手的 M1-B 后端开发基线，不是完整购物比较产品。系统在 M0 运行底座和 M1-A 数据模型之上，已经具备 T11/T12 的首个业务闭环：创建 2～3 个候选商品的对比草稿、使用 Fixture Provider 解析商品、查询聚合详情、确认 SKU，并在基础类别可比性检查后进入维度确认阶段。
+当前系统是购物决策助手的 M1-C 本地开发基线，不是完整购物比较产品。系统在 M0 运行底座、M1-A 数据模型和 M1-B Comparison API 之上，已经具备 T11/T12/T26/T13 的首个可操作闭环：输入 2～3 个候选商品、使用 Fixture Provider 解析商品、确认 SKU，并保存和恢复评论窗口、预算、使用场景、关注点和禁忌项。
 
 当前迁移链为 `0001 -> 0002 -> 0003 -> 0004 -> 0005`，PostgreSQL 仍包含 16 张业务表；`0005` 为 `comparison_tasks` 增加创建幂等摘要和请求指纹约束。以下行为仍未实现：
 
-- 用户预算、使用场景、关注点和禁忌项的应用用例；
 - 品牌资料采集、维度种子、动态维度推荐和维度确认接口；
 - 评论清洗、注解执行和指标计算算法；
 - LangGraph 工作流、Celery 业务任务、任务进度推送和保留期清理；
 - 报告生成、图表、报告追问业务和管理端；
-- 商品比较前端页面和交互流程；
 - 用户身份、任务归属、多租户权限和匿名访问凭证；
 - 真实淘宝生产数据 Provider；
 - 真实 LLM 供应商适配器。
@@ -55,9 +56,9 @@ Docker Compose 当前定义五个目标服务：
 |---|---|
 | `postgres` | 使用 PostgreSQL 16，保存 Alembic 迁移状态并参与 readiness 检查；`0005` head 定义 16 张业务表和 M1-B 创建幂等约束；M1-B Comparison API 通过短事务写入任务、候选、快照、SKU 和事件；容器内不暴露宿主端口 |
 | `redis` | 使用 Redis 7；Celery 配置将其不同 DB 用作 broker/result backend，并参与 readiness 检查；容器内不暴露宿主端口 |
-| `api` | 使用 Python 3.12 运行 FastAPI/Uvicorn，开发环境暴露宿主端口 8000 |
+| `api` | 使用 Python 3.12 运行 FastAPI/Uvicorn，提供 M1-C Comparison 与偏好 API，开发环境暴露宿主端口 8000 |
 | `worker` | 与 API 共享后端代码和镜像，运行 Celery Worker；不暴露 HTTP 端口 |
-| `web` | 构建 Vue 3 SPA，通过 Nginx 在开发环境暴露宿主端口 5173 |
+| `web` | 构建 Vue 3 SPA，通过 Nginx 暴露宿主端口 5173，并代理 `/api` 与支持 history fallback |
 
 Compose 项目名固定为：
 
@@ -81,11 +82,11 @@ docker compose -f docker/docker-compose.yml <command>
 ### 3.2 模块边界
 
 - API 和 Worker 共享 `backend/src/app` 中的配置、错误、数据库、领域规则和 Provider 契约。
-- API 负责健康检查、统一错误以及 M1-B 对比草稿、解析、详情和商品确认请求；Worker 当前只提供基础 Celery 运行能力和无业务副作用的 smoke task，尚未编排分析业务。
+- API 负责健康检查、统一错误以及 M1-C 对比草稿、解析、详情、商品确认和偏好更新请求；Worker 当前只提供基础 Celery 运行能力和无业务副作用的 smoke task，尚未编排分析业务。
 - `app.domain` 定义任务状态、商品、品牌、维度、评论、指标、报告 claim 和模型运行的纯领域校验；不依赖 API、Celery、LangGraph 或供应商 SDK。
 - `app.infrastructure.db.models` 定义 16 张业务表；按 comparison、catalog、analysis、report、model run 划分的 Repository 负责查询和持久化，但不自行提交事务。
 - PostgreSQL 是业务持久化真源；Redis 不得成为任务、指标或报告的唯一持久状态。
-- Web 当前只展示 M1-B 后端开发基线状态，不提供商品输入、SKU 确认或其他业务流程。
+- Web 提供商品输入、商品/SKU 确认和购买偏好三步流程；任务恢复以路由 ID 和服务端详情为真源。
 
 ### 3.3 默认适配器
 
@@ -353,7 +354,19 @@ M0 只启用 `fake` LLM Provider。模型工厂不创建真实供应商客户端
 - ECharts；
 - Vitest 和 Vue Test Utils。
 
-当前只有根路由 `/` 和状态首页。首页显示 M1-B 后端开发基线、Fixture Provider、合规优先以及尚未开放真实淘宝分析。当前不包含商品输入、SKU 确认或其他商品比较业务页面。
+当前路由：
+
+```text
+/                                      商品链接输入、任务创建和 Fixture 解析
+/comparisons/:id/confirm               商品事实与 SKU 确认
+/comparisons/:id/preferences           评论窗口与购买偏好
+```
+
+- 页面通过统一 `src/api/request.ts` 解析 JSON、超时和 ProblemDetails。
+- Pinia store 统一编排创建、解析、详情恢复、商品确认和偏好更新。
+- 路由中的任务 ID 是页面恢复真源；localStorage 只保存最近任务 ID，不保存原始商品链接。
+- Vite 将 `/api` 代理到本地 API；Nginx 容器代理 `/api/` 并为深层路由提供 SPA fallback。
+- Fixture 图片不可用时显示本地占位视觉，不发起外部 `.invalid` 图片请求。
 
 ## 11. 测试与交付基线
 
@@ -368,7 +381,8 @@ M0 只启用 `fake` LLM Provider。模型工厂不创建真实供应商客户端
 - Testcontainers PostgreSQL 集成测试；
 - Alembic upgrade/current/check。
 
-M1-B 本地验收结果为 104 项快速测试、32 项 PostgreSQL 集成测试和 136 项完整测试全部通过。
+M1-C 本地完整验收为 149 项后端测试全部通过；Ruff、format 和 mypy 同时通过，Alembic head
+保持 `0005` 且无 metadata drift。
 
 ### 11.2 前端
 
@@ -378,7 +392,9 @@ M1-B 本地验收结果为 104 项快速测试、32 项 PostgreSQL 集成测试�
 - Vitest；
 - Vite production build。
 
-前端构建存在大 chunk 警告，但不影响 M0 行为。后续业务页面应采用路由懒加载和依赖按需导入。
+M1-C 前端 typecheck、3 个 Vitest 文件共 8 项测试和 production build 全部通过。业务页面已
+采用路由懒加载；Ant Design Vue 全局导入仍使主 chunk 约 1.53 MB，属于非阻断构建警告。
+浏览器已验证桌面端和 `390x844` 移动端偏好保存、刷新恢复、无横向溢出和控制台零错误。
 
 ### 11.3 本地交付与 CI 配置
 
@@ -389,7 +405,7 @@ M1-B 本地验收结果为 104 项快速测试、32 项 PostgreSQL 集成测试�
 - Node.js 22 前端检查、测试和构建；
 - Docker Compose 配置校验。
 
-该仓库当前按个人项目维护，不要求 GitHub Actions 远端运行作为验收前提。本地 Ruff、format、mypy、Pytest、Testcontainers PostgreSQL、Alembic、前端 typecheck/test/build 是当前交付门禁。M1-B 的执行环境、命令和结果见 `docs/m1b-verification.md`。
+该仓库当前按个人项目维护，不要求 GitHub Actions 远端运行作为验收前提。本地 Ruff、format、mypy、Pytest、Testcontainers PostgreSQL、Alembic、前端 typecheck/test/build、Compose 和浏览器验收是当前交付门禁。M1-C 的执行环境、命令和结果见 `docs/m1c-verification.md`。
 
 ## 12. 淘宝生产接入门禁
 
@@ -428,6 +444,9 @@ Fixture 模式可以继续用于 M1/M2 内部开发和自动化测试。
 15. M1-B 创建幂等只保存摘要和请求指纹，不保存原始 `Idempotency-Key`。
 16. M1-B Provider 调用不得位于数据库写事务内，解析结果必须全部提交或全部不提交。
 17. M1-B API 尚无用户身份和任务归属控制，不得直接作为公网生产接口。
+18. M1-C 偏好只允许在 `awaiting_dimension_confirmation` 状态整体替换；相同内容可幂等保存。
+19. M1-C 原始商品链接不得写入浏览器持久化；页面恢复必须通过任务 ID 查询服务端。
+20. M1-C 偏好事件不得保存用户文本正文，只允许记录评论窗口和条目数量。
 
 ## 14. M1-A 领域与 Repository 边界
 
@@ -454,7 +473,7 @@ Fixture 模式可以继续用于 M1/M2 内部开发和自动化测试。
 - JSON、事件、评论、来源和模型审计字段不得保存 Cookie、Authorization、API Key、用户登录态、完整 Prompt、完整模型响应或未经白名单过滤的 Provider payload。
 - 外部商品、评论和模型文本始终是不可信数据，持久化不赋予其指令或工具调用权限。
 - M1-A 没有新增业务 API、Celery 业务编排、LangGraph 工作流、分析算法、业务前端、真实淘宝 Provider 或真实 LLM 适配器；16 张表和 Repository 的存在不表示这些端到端能力已经实现。
-- M1-B 已在上述 M1-A 基线之上新增对比草稿与商品确认 API，但仍未实现分析编排、业务前端或生产外部 Provider。
+- M1-C 已在上述基线之上提供商品输入、商品确认与偏好页面，但仍未实现分析编排、动态维度、报告或生产外部 Provider。
 
 ## 15. M1-B 对比草稿与商品确认
 
@@ -507,3 +526,38 @@ POST /api/v1/comparisons/{comparison_id}/confirm-products
 - M1-B 同步使用合成 Fixture，不连接真实淘宝或真实 LLM。
 - M1-B 不获取评论，不实现用户偏好、动态维度、评论分析、指标、报告、追问、Celery、LangGraph 或业务前端。
 - M1-B 不包含用户身份、任务归属和多租户权限，仅作为本地开发基线。
+
+## 16. M1-C 商品输入与用户偏好闭环
+
+### 16.1 HTTP 与偏好契约
+
+M1-C 在 M1-B 接口之外新增：
+
+```text
+PUT /api/v1/comparisons/{comparison_id}/preferences
+```
+
+- 请求整体替换 `review_window_days`、预算和偏好文本列表，禁止额外字段。
+- 预算使用 Decimal，允许只填写上限；金额范围为 0～1,000,000，上限不得低于下限。
+- 使用场景为 1～5 项，关注点为 1～8 项，禁忌项为 0～8 项。
+- 文本执行 trim、Unicode NFKC、空值拒绝、稳定去重和单项 80 字限制。
+- 只有 `awaiting_dimension_confirmation` 任务允许保存；相同规范化内容可幂等重放。
+- 偏好复用 `comparison_tasks.preferences` JSONB，迁移 head 保持 `0005`。
+- 更新事件只记录评论窗口和各列表数量，不记录用户输入正文。
+
+### 16.2 Web 流程与恢复
+
+1. 根页面输入 2～3 个 Fixture 商品链接并创建、解析任务。
+2. 确认页查询最新详情，展示商品事实与 SKU，提交全部商品选择。
+3. 偏好页查询详情并回填评论窗口、预算和偏好列表。
+4. 保存成功后仍停留在维度确认阶段，并显示下一里程碑边界。
+5. 确认页和偏好页可直接刷新；恢复不依赖 Pinia 内存状态。
+
+### 16.3 运行代理与边界
+
+- 前端只通过相对 `/api` 访问后端；Vite 和 Nginx 分别提供开发与容器代理。
+- Nginx 使用 `try_files` 支持 Vue history 深层路由刷新。
+- 原始商品链接只存在于创建前表单内存，不进入 localStorage。
+- 无效 Fixture 图片显示本地占位视觉，不执行真实网络请求。
+- 当前无身份、任务归属和访问凭证控制，只能用于本地开发。
+- M1-C 不实现动态维度、评论分析、异步编排、报告或真实淘宝 Provider。

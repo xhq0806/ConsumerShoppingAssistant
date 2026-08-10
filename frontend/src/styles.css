@@ -1,3 +1,21 @@
+:root {
+  color-scheme: light;
+  --canvas: #edf0ed;
+  --surface: #ffffff;
+  --surface-subtle: #f5f6f3;
+  --ink: #18201d;
+  --muted: #68716d;
+  --line: #dfe4df;
+  --line-strong: #bcc6bf;
+  --positive: #286f51;
+  --accent: #d45d43;
+  --danger: #b84336;
+}
+
+* {
+  box-sizing: border-box;
+}
+
 html,
 body,
 #app {
@@ -7,20 +25,93 @@ body,
 
 body {
   min-width: 320px;
-  background: #f3f6fb;
-  color: #172033;
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: Aptos, "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
+  letter-spacing: 0;
 }
 
-.page-shell {
-  display: grid;
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.app-frame {
   min-height: 100vh;
-  place-items: center;
-  padding: 32px;
 }
 
-.hero-card {
-  width: min(720px, 100%);
-  border-radius: 20px;
-  box-shadow: 0 18px 60px rgb(31 57 94 / 12%);
+.workspace {
+  width: min(1120px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 34px 0 64px;
+}
+
+.workspace-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  gap: 24px;
+}
+
+.workspace-heading h1 {
+  margin: 6px 0 7px;
+  color: var(--ink);
+  font-family: Georgia, "Noto Serif SC", serif;
+  font-size: clamp(26px, 4vw, 38px);
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.workspace-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.eyebrow {
+  color: var(--positive);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.workspace-alert {
+  margin-bottom: 18px;
+}
+
+.primary-command.ant-btn-primary {
+  border-color: var(--ink);
+  background: var(--ink);
+  box-shadow: none;
+}
+
+.primary-command.ant-btn-primary:hover,
+.primary-command.ant-btn-primary:focus {
+  border-color: var(--positive);
+  background: var(--positive);
+}
+
+.ant-btn,
+.ant-input,
+.ant-input-number,
+.ant-select-selector,
+.ant-alert,
+.ant-segmented {
+  border-radius: 4px !important;
+}
+
+@media (max-width: 640px) {
+  .workspace {
+    width: min(100% - 24px, 1120px);
+    padding-top: 24px;
+  }
+
+  .workspace-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
 }

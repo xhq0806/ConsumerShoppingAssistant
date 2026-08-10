@@ -9,7 +9,9 @@
 - `backend/tests/unit`：纯逻辑单元测试。
 - `backend/tests/contract`：Provider 与 LLM 共享契约。
 - `backend/tests/integration`：PostgreSQL/Testcontainers 等集成测试。
-- `frontend/src`：Vue SPA。
+- `frontend/src/api`：统一请求、ProblemDetails 和 Comparison API 类型。
+- `frontend/src/stores`：Pinia 对比流程状态。
+- `frontend/src/views/comparisons`：商品输入、商品确认和购买偏好页面。
 - `docs/spikes`：高风险技术与合规预研。
 
 ## Windows 开发前置条件
@@ -75,20 +77,37 @@ alembic check
 业务表；M1-B 通过 `0005` 增加创建幂等摘要、请求指纹、成对 CHECK 和部分唯一索引。
 当前 head 为 `0005`。Repository 不自行提交事务，由应用用例或 UnitOfWork 控制提交与回滚。
 
-## M1-B 对比 API
+## M1-C 对比 API 与页面
 
 ```text
 POST /api/v1/comparisons
 POST /api/v1/comparisons/{comparison_id}/parse
 GET  /api/v1/comparisons/{comparison_id}
 POST /api/v1/comparisons/{comparison_id}/confirm-products
+PUT  /api/v1/comparisons/{comparison_id}/preferences
 ```
 
 - 创建接口在事务外规范化 URL，并支持不保存原始键的创建幂等。
 - 解析接口同步调用 Fixture Provider；Provider 调用期间不持有数据库写事务。
 - 详情接口只返回白名单字段、最新商品快照、SKU 和脱敏事件。
 - 确认接口必须覆盖全部候选商品，并在基础类别可比性检查后进入维度确认阶段。
+- 偏好接口整体替换评论窗口、预算、使用场景、关注点和禁忌项；只有
+  `awaiting_dimension_confirmation` 状态允许保存。
+- 偏好复用 `comparison_tasks.preferences` JSONB，不新增数据库迁移。
 - API 尚无用户身份与任务归属控制，只能用于本地开发，不得直接公网开放。
+
+前端路由：
+
+```text
+/                                      商品链接输入与解析
+/comparisons/:id/confirm               商品事实与 SKU 确认
+/comparisons/:id/preferences           评论范围与购买偏好
+```
+
+- 页面恢复以路由中的任务 ID 和服务端详情为真源，不依赖 Pinia 内存状态。
+- Vite 开发环境将 `/api` 代理到 `localhost:8000`。
+- Nginx 容器将 `/api/` 代理到 `api:8000`，并使用 SPA fallback 支持深层路由刷新。
+- 原始商品链接仅存在于创建前的表单内存中，不写入浏览器持久化。
 
 ## 前端质量命令
 
@@ -98,6 +117,13 @@ npm ci
 npm run typecheck
 npm run test -- --run
 npm run build
+```
+
+M1-C 的浏览器验收覆盖完整偏好保存、刷新恢复、桌面端和 `390x844` 移动端布局。验收截图位于：
+
+```text
+docs/assets/m1c-preferences-desktop.png
+docs/assets/m1c-preferences-mobile.png
 ```
 
 ## 新 Commerce Provider 规则

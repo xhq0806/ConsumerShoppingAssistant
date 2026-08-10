@@ -29,6 +29,7 @@ from app.domain.comparisons import (
     validate_confirmation_set,
     validate_unique_candidates,
 )
+from app.domain.comparisons.preferences import UserPreferences
 from app.domain.products import ProductParseStatus
 from app.infrastructure.db.comparison_repository import ComparisonRepository
 from app.infrastructure.db.models import (
@@ -62,6 +63,18 @@ class ConfirmProductsCommand:
     """承载一次覆盖所有候选的确认输入。by AI.Coding"""
 
     products: tuple[ProductConfirmation, ...]
+
+
+@dataclass(frozen=True)
+class UpdatePreferencesCommand:
+    """承载评论窗口和用户购买偏好的整体替换输入。by AI.Coding"""
+
+    review_window_days: int
+    budget_min: Decimal | None
+    budget_max: Decimal | None
+    usage_scenarios: tuple[str, ...]
+    priority_concerns: tuple[str, ...]
+    deal_breakers: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -132,6 +145,7 @@ class ComparisonView:
     progress: int
     products: tuple[ProductView, ...]
     events: tuple[EventView, ...]
+    preferences: UserPreferences | None = None
     warnings: tuple[ComparabilityWarning, ...] = ()
 
 
@@ -335,6 +349,52 @@ class ComparisonApplicationService:
             assert loaded is not None
             return self._to_view(loaded, warnings=warnings)
 
+    async def update_preferences(
+        self, comparison_id: UUID, command: UpdatePreferencesCommand
+    ) -> ComparisonView:
+        """整体替换已确认任务的评论窗口和规范化用户偏好。by AI.Coding"""
+        preferences = UserPreferences.create(
+            budget_min=command.budget_min,
+            budget_max=command.budget_max,
+            usage_scenarios=command.usage_scenarios,
+            priority_concerns=command.priority_concerns,
+            deal_breakers=command.deal_breakers,
+        )
+        persisted = preferences.to_persisted()
+        async with self._uow_factory() as uow:
+            repository = self._repository(uow)
+            task = await self._required_task(repository, comparison_id, for_update=True)
+            if task.status is not ComparisonStatus.AWAITING_DIMENSION_CONFIRMATION:
+                raise DomainConflictError("当前任务状态不允许保存用户偏好")
+            if (
+                task.review_window_days == command.review_window_days
+                and task.preferences == persisted
+            ):
+                # 相同整体载荷不重复写事件，保持 PUT 重试的幂等语义。
+                return self._to_view(task)
+            task.review_window_days = command.review_window_days
+            task.preferences = persisted
+            repository.add_event(
+                comparison_id=task.id,
+                stage=TaskStage.DIMENSION_CONFIRMATION,
+                event_type=TaskEventType.INFO,
+                progress=100,
+                message="用户偏好已保存。",
+                details={
+                    "review_window_days": command.review_window_days,
+                    "usage_scenario_count": len(preferences.usage_scenarios),
+                    "priority_concern_count": len(preferences.priority_concerns),
+                    "deal_breaker_count": len(preferences.deal_breakers),
+                },
+            )
+            session = self._session(uow)
+            await session.flush()
+            task_id = task.id
+            session.expire_all()
+            loaded = await repository.get_detail(task_id)
+            assert loaded is not None
+            return self._to_view(loaded)
+
     async def _normalize_urls(
         self, product_urls: Sequence[str]
     ) -> tuple[NormalizedProductUrl, ...]:
@@ -492,6 +552,7 @@ class ComparisonApplicationService:
             progress=task.progress,
             products=products,
             events=events,
+            preferences=UserPreferences.from_persisted(task.preferences),
             warnings=tuple(warnings),
         )
 
