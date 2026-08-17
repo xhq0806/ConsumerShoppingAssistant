@@ -29,6 +29,14 @@ services:
       timeout: 3s
       retries: 10
 
+  migrate:
+    build: ../backend
+    env_file: ../.env
+    command: alembic upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     build: ../backend
     env_file: ../.env
@@ -36,8 +44,8 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
@@ -48,8 +56,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   web:
     build: ../frontend

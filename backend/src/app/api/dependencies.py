@@ -7,12 +7,14 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.application.analysis_tasks import AnalysisApplicationService
 from app.application.comparisons import ComparisonApplicationService
 from app.core.config import Settings, get_settings
 from app.infrastructure.db.dependencies import session_factory
 from app.infrastructure.db.transaction import UnitOfWork
 from app.providers.commerce.base import CommerceDataProvider
 from app.providers.fixture.provider import FixtureCommerceDataProvider
+from app.workers.dispatcher import CeleryAnalysisTaskDispatcher
 
 
 @lru_cache
@@ -39,3 +41,24 @@ def get_comparison_service(
     """组装路由所需的 M1-B application service。by AI.Coding"""
     # 依赖替换入口集中在此，路由保持不感知 ORM 与 Provider 实现。
     return ComparisonApplicationService(uow_factory, commerce_provider)
+
+
+@lru_cache
+def get_analysis_dispatcher() -> CeleryAnalysisTaskDispatcher:
+    """返回 API 进程使用的 Celery 分析任务调度器。by AI.Coding"""
+    return CeleryAnalysisTaskDispatcher()
+
+
+def get_analysis_service(
+    commerce_provider: Annotated[CommerceDataProvider, Depends(get_commerce_provider)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(get_uow_factory)],
+    dispatcher: Annotated[CeleryAnalysisTaskDispatcher, Depends(get_analysis_dispatcher)],
+) -> AnalysisApplicationService:
+    """组装分析启动、重试和进度查询应用服务。by AI.Coding"""
+    settings = get_settings()
+    return AnalysisApplicationService(
+        uow_factory,
+        commerce_provider,
+        dispatcher=dispatcher,
+        max_reviews_per_product=settings.review_max_per_product,
+    )

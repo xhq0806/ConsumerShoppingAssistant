@@ -8,9 +8,13 @@ import {
   createComparison,
   generateComparisonDimensions,
   getComparison,
+  getComparisonAnalysisProgress,
   getComparisonDimensions,
   parseComparison,
+  retryComparisonAnalysis,
+  startComparisonAnalysis,
   updateComparisonPreferences,
+  type AnalysisProgress,
   type ComparisonDetail,
   type DimensionSet,
 } from '@/api/comparisons'
@@ -25,6 +29,9 @@ vi.mock('@/api/comparisons', () => ({
   generateComparisonDimensions: vi.fn(),
   getComparisonDimensions: vi.fn(),
   confirmComparisonDimensions: vi.fn(),
+  startComparisonAnalysis: vi.fn(),
+  retryComparisonAnalysis: vi.fn(),
+  getComparisonAnalysisProgress: vi.fn(),
 }))
 
 const comparisonFixture: ComparisonDetail = {
@@ -59,6 +66,18 @@ const dimensionSetFixture: DimensionSet = {
       description: '比较价格。',
     },
   ],
+}
+
+const analysisProgressFixture: AnalysisProgress = {
+  comparison_id: 'comparison-1',
+  status: 'processing',
+  progress: 45,
+  stage: 'review_data_ready',
+  message: '近期评论已获取并清洗，等待后续分析。',
+  fetched_review_count: 3,
+  valid_review_count: 2,
+  can_retry: false,
+  polling_complete: true,
 }
 
 describe('useComparisonStore', () => {
@@ -148,5 +167,39 @@ describe('useComparisonStore', () => {
       dimension_codes: ['price'],
     })
     expect(store.dimensionSet?.status).toBe('queued')
+  })
+
+  it('启动、轮询并重试异步分析任务', async () => {
+    vi.mocked(startComparisonAnalysis).mockResolvedValue({
+      ...analysisProgressFixture,
+      status: 'queued',
+      progress: 0,
+      stage: 'queued',
+      message: '任务已排队。',
+      fetched_review_count: 0,
+      valid_review_count: 0,
+      polling_complete: false,
+    })
+    vi.mocked(getComparisonAnalysisProgress).mockResolvedValue(analysisProgressFixture)
+    vi.mocked(retryComparisonAnalysis).mockResolvedValue({
+      ...analysisProgressFixture,
+      status: 'queued',
+      progress: 0,
+      stage: 'queued',
+      message: '任务已重新排队。',
+      fetched_review_count: 0,
+      valid_review_count: 0,
+      polling_complete: false,
+    })
+    const store = useComparisonStore()
+
+    await store.startAnalysis('comparison-1')
+    await store.loadAnalysisProgress('comparison-1')
+    await store.retryAnalysis('comparison-1')
+
+    expect(startComparisonAnalysis).toHaveBeenCalledWith('comparison-1')
+    expect(getComparisonAnalysisProgress).toHaveBeenCalledWith('comparison-1')
+    expect(retryComparisonAnalysis).toHaveBeenCalledWith('comparison-1')
+    expect(store.analysisProgress?.status).toBe('queued')
   })
 })

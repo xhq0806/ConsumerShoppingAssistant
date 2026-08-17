@@ -7,7 +7,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from app.api.dependencies import get_comparison_service
+from app.api.dependencies import get_analysis_service, get_comparison_service
+from app.application.analysis_tasks import AnalysisProgressView
 from app.application.comparisons import (
     ComparisonView,
     ConfirmDimensionsCommand,
@@ -81,6 +82,18 @@ class _FakeComparisonService:
         self.confirmed_dimensions = command
         return self._dimension_set(status="queued")
 
+    async def request_analysis(self, _comparison_id: object) -> AnalysisProgressView:
+        """返回 queued 分析投递进度。by AI.Coding"""
+        return self._analysis_progress()
+
+    async def retry_analysis(self, _comparison_id: object) -> AnalysisProgressView:
+        """返回重新排队后的分析进度。by AI.Coding"""
+        return self._analysis_progress()
+
+    async def get_analysis_progress(self, _comparison_id: object) -> AnalysisProgressView:
+        """返回评论数据准备完成的稳定进度。by AI.Coding"""
+        return self._analysis_progress(status="processing", progress=45)
+
     def _view(self, *, preferences: UserPreferences | None = None) -> ComparisonView:
         """构造无敏感字段的稳定应用视图。by AI.Coding"""
         # 固定空事件与快照，专注 API 路由而不复制领域或数据库测试职责。
@@ -142,6 +155,22 @@ class _FakeComparisonService:
             ),
         )
 
+    def _analysis_progress(
+        self, *, status: str = "queued", progress: int = 0
+    ) -> AnalysisProgressView:
+        """构造分析 API 路由测试所需的最小进度视图。by AI.Coding"""
+        return AnalysisProgressView(
+            comparison_id=self.comparison_id,
+            status=status,
+            progress=progress,
+            stage="queued" if status == "queued" else "review_data_ready",
+            message="任务已排队。" if status == "queued" else "评论数据已准备。",
+            fetched_review_count=3 if status == "processing" else 0,
+            valid_review_count=2 if status == "processing" else 0,
+            can_retry=False,
+            polling_complete=status == "processing",
+        )
+
 
 @pytest.fixture
 def comparison_app() -> tuple[FastAPI, _FakeComparisonService]:
@@ -150,6 +179,7 @@ def comparison_app() -> tuple[FastAPI, _FakeComparisonService]:
     application = create_app()
     # 覆盖统一依赖工厂，证明路由可测试且不会自行访问 ORM 或 Provider。
     application.dependency_overrides[get_comparison_service] = lambda: fake_service
+    application.dependency_overrides[get_analysis_service] = lambda: fake_service
     return application, fake_service
 
 
@@ -224,6 +254,9 @@ async def test_comparison_routes_forbid_extra_input_and_publish_operation_ids(
         "generate_comparison_dimension_recommendations",
         "get_comparison_dimensions",
         "confirm_comparison_dimensions",
+        "start_comparison_analysis",
+        "retry_comparison_analysis",
+        "get_comparison_analysis_progress",
     } <= operation_ids
 
 
@@ -337,3 +370,37 @@ async def test_dimension_confirmation_rejects_empty_and_extra_fields(
 
     assert empty.status_code == 422
     assert extra.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_analysis_routes_start_retry_and_return_progress_contract(
+    comparison_app: tuple[FastAPI, _FakeComparisonService],
+) -> None:
+    """分析端点返回持久化状态、计数和轮询完成标志。by AI.Coding"""
+    application, fake_service = comparison_app
+    async with AsyncClient(
+        transport=ASGITransport(app=application), base_url="http://test"
+    ) as client:
+        started = await client.post(
+            f"/api/v1/comparisons/{fake_service.comparison_id}/analysis/start"
+        )
+        retried = await client.post(
+            f"/api/v1/comparisons/{fake_service.comparison_id}/analysis/retry"
+        )
+        progress = await client.get(
+            f"/api/v1/comparisons/{fake_service.comparison_id}/analysis/progress"
+        )
+
+    assert started.json()["status"] == "queued"
+    assert retried.status_code == 200
+    assert progress.json() == {
+        "comparison_id": str(fake_service.comparison_id),
+        "status": "processing",
+        "progress": 45,
+        "stage": "review_data_ready",
+        "message": "评论数据已准备。",
+        "fetched_review_count": 3,
+        "valid_review_count": 2,
+        "can_retry": False,
+        "polling_complete": True,
+    }

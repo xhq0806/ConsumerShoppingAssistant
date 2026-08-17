@@ -10,3 +10,4 @@
 | M1-B 对比草稿与商品确认流程 | [comparison-draft-confirmation.md](comparison-draft-confirmation.md) | 2026-08-06 | Comparison API、Application Service、幂等与 SKU 确认 |
 | M1-C 商品输入与用户偏好闭环 | [m1c-shopping-input-preferences.md](m1c-shopping-input-preferences.md) | 2026-08-10 | T26 前端流程、T13 用户偏好、Pinia、Vite/Nginx 代理 |
 | M1-D 动态维度推荐与确认闭环 | [m1d-dynamic-dimensions.md](m1d-dynamic-dimensions.md) | 2026-08-11 | 维度种子、确定性推荐、任务维度 API、Vue 确认页 |
+| M1-E 异步评论采集与进度闭环 | [m1e-async-review-ingestion.md](m1e-async-review-ingestion.md) | 2026-08-17 | Compose migrate、Celery Worker、评论清洗、进度 API/页面 |

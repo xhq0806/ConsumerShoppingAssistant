@@ -157,6 +157,20 @@ class DimensionSetResponse(_StrictSchema):
     dimensions: list[DimensionRecommendationResponse]
 
 
+class AnalysisProgressResponse(_StrictSchema):
+    """定义异步评论采集进度的安全恢复结构。by AI.Coding"""
+
+    comparison_id: UUID
+    status: str
+    progress: int
+    stage: str
+    message: str
+    fetched_review_count: int
+    valid_review_count: int
+    can_retry: bool
+    polling_complete: bool
+
+
 class ComparisonSummaryResponse(_StrictSchema):
     """定义创建或幂等重放时返回的任务摘要。by AI.Coding"""
 

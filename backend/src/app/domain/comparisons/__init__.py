@@ -103,7 +103,7 @@ _ALLOWED_TRANSITIONS: dict[ComparisonStatus, frozenset[ComparisonStatus]] = {
     ),
     ComparisonStatus.COMPLETED: frozenset({ComparisonStatus.DELETED}),
     ComparisonStatus.PARTIALLY_COMPLETED: frozenset({ComparisonStatus.DELETED}),
-    ComparisonStatus.FAILED: frozenset({ComparisonStatus.DELETED}),
+    ComparisonStatus.FAILED: frozenset({ComparisonStatus.QUEUED, ComparisonStatus.DELETED}),
     ComparisonStatus.DELETED: frozenset(),
 }
 

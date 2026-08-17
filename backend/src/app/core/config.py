@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     celery_broker_url: str = "redis://localhost:6379/1"
     celery_result_backend: str = "redis://localhost:6379/2"
+    review_max_per_product: int = Field(default=500, ge=1, le=500)
 
     commerce_provider: Literal["fixture"] = "fixture"
     llm_provider: Literal["fake"] = "fake"

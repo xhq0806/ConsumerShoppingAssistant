@@ -99,6 +99,18 @@ export interface DimensionSet {
   dimensions: DimensionRecommendation[]
 }
 
+export interface AnalysisProgress {
+  comparison_id: string
+  status: string
+  progress: number
+  stage: string
+  message: string
+  fetched_review_count: number
+  valid_review_count: number
+  can_retry: boolean
+  polling_complete: boolean
+}
+
 export interface CreateComparisonPayload {
   product_urls: string[]
   review_window_days: 30 | 60
@@ -192,4 +204,27 @@ export function confirmComparisonDimensions(
     method: 'POST',
     body: JSON.stringify(payload),
   })
+}
+
+export function startComparisonAnalysis(comparisonId: string): Promise<AnalysisProgress> {
+  /** 投递 queued 分析任务或返回当前持久化进度。by AI.Coding */
+  return requestJson<AnalysisProgress>(`${COMPARISON_API}/${comparisonId}/analysis/start`, {
+    method: 'POST',
+  })
+}
+
+export function retryComparisonAnalysis(comparisonId: string): Promise<AnalysisProgress> {
+  /** 重新投递可重试的评论采集失败。by AI.Coding */
+  return requestJson<AnalysisProgress>(`${COMPARISON_API}/${comparisonId}/analysis/retry`, {
+    method: 'POST',
+  })
+}
+
+export function getComparisonAnalysisProgress(
+  comparisonId: string,
+): Promise<AnalysisProgress> {
+  /** 查询异步评论采集的服务端持久化进度。by AI.Coding */
+  return requestJson<AnalysisProgress>(
+    `${COMPARISON_API}/${comparisonId}/analysis/progress`,
+  )
 }

@@ -71,7 +71,7 @@ class ReviewFetchRequest(ImmutableModel):
     product_url: NormalizedProductUrl
     sku_id: str | None = None
     window_days: Literal[30, 60]
-    max_reviews: int = Field(default=500, ge=1, le=5000)
+    max_reviews: int = Field(default=500, ge=1, le=500)
 
 
 class ReviewProviderResult(ImmutableModel):

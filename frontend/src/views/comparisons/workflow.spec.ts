@@ -10,9 +10,13 @@ import {
   createComparison,
   generateComparisonDimensions,
   getComparison,
+  getComparisonAnalysisProgress,
   getComparisonDimensions,
   parseComparison,
+  retryComparisonAnalysis,
+  startComparisonAnalysis,
   updateComparisonPreferences,
+  type AnalysisProgress,
   type ComparisonDetail,
   type DimensionSet,
 } from '@/api/comparisons'
@@ -20,6 +24,7 @@ import ConfirmProductsView from './ConfirmProductsView.vue'
 import DimensionsView from './DimensionsView.vue'
 import InputView from './InputView.vue'
 import PreferencesView from './PreferencesView.vue'
+import ProgressView from './ProgressView.vue'
 import { limitPreferenceItems } from './preferenceLimits'
 
 vi.mock('@/api/comparisons', () => ({
@@ -31,6 +36,9 @@ vi.mock('@/api/comparisons', () => ({
   generateComparisonDimensions: vi.fn(),
   getComparisonDimensions: vi.fn(),
   confirmComparisonDimensions: vi.fn(),
+  startComparisonAnalysis: vi.fn(),
+  retryComparisonAnalysis: vi.fn(),
+  getComparisonAnalysisProgress: vi.fn(),
 }))
 
 const comparisonFixture: ComparisonDetail = {
@@ -133,6 +141,18 @@ const dimensionSetFixture: DimensionSet = {
       description: '后续汇总近期评论。',
     },
   ],
+}
+
+const analysisProgressFixture: AnalysisProgress = {
+  comparison_id: 'comparison-1',
+  status: 'processing',
+  progress: 45,
+  stage: 'review_data_ready',
+  message: '近期评论已获取并清洗，等待后续分析。',
+  fetched_review_count: 3,
+  valid_review_count: 2,
+  can_retry: false,
+  polling_complete: true,
 }
 
 beforeEach(() => {
@@ -253,7 +273,7 @@ describe('M1-C workflow views', () => {
     expect(updateComparisonPreferences).not.toHaveBeenCalled()
   })
 
-  it('恢复维度后支持删除、添加并按当前顺序确认', async () => {
+  it('恢复维度后支持删除、添加并按当前顺序进入进度页', async () => {
     vi.mocked(getComparison).mockResolvedValue(comparisonFixture)
     vi.mocked(getComparisonDimensions).mockResolvedValue(dimensionSetFixture)
     vi.mocked(confirmComparisonDimensions).mockResolvedValue({
@@ -282,12 +302,83 @@ describe('M1-C workflow views', () => {
     expect(confirmComparisonDimensions).toHaveBeenCalledWith('comparison-1', {
       dimension_codes: ['battery_life', 'review_reputation'],
     })
-    expect(wrapper.text()).toContain('任务已进入分析队列边界')
+    expect(router.currentRoute.value.fullPath).toBe('/comparisons/comparison-1/progress')
+  })
+
+  it('进度页自动投递 queued 任务并显示清洗后样本', async () => {
+    vi.mocked(getComparison).mockResolvedValue({
+      ...comparisonFixture,
+      status: 'queued',
+      progress: 0,
+    })
+    vi.mocked(getComparisonAnalysisProgress).mockResolvedValue({
+      ...analysisProgressFixture,
+      status: 'queued',
+      progress: 0,
+      stage: 'queued',
+      message: '任务已排队，等待评论采集。',
+      fetched_review_count: 0,
+      valid_review_count: 0,
+      polling_complete: false,
+    })
+    vi.mocked(startComparisonAnalysis).mockResolvedValue(analysisProgressFixture)
+    const router = createTestRouter()
+    await router.push('/comparisons/comparison-1/progress')
+    await router.isReady()
+    const wrapper = mount(ProgressView, {
+      global: { plugins: [createPinia(), router, Antd] },
+    })
+    await flushPromises()
+
+    expect(startComparisonAnalysis).toHaveBeenCalledWith('comparison-1')
+    expect(wrapper.text()).toContain('近期评论已获取并清洗')
+    expect(wrapper.text()).toContain('Provider 获取')
+    expect(wrapper.text()).toContain('清洗后有效')
+    expect(wrapper.text()).toContain('3')
+    expect(wrapper.text()).toContain('2')
+  })
+
+  it('首次进度查询临时失败后自动重试并继续启动任务', async () => {
+    vi.useFakeTimers()
+    vi.mocked(getComparison).mockResolvedValue({
+      ...comparisonFixture,
+      status: 'queued',
+      progress: 0,
+    })
+    vi.mocked(getComparisonAnalysisProgress)
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValue({
+        ...analysisProgressFixture,
+        status: 'queued',
+        progress: 0,
+        stage: 'queued',
+        message: '任务已排队，等待评论采集。',
+        fetched_review_count: 0,
+        valid_review_count: 0,
+        polling_complete: false,
+      })
+    vi.mocked(startComparisonAnalysis).mockResolvedValue(analysisProgressFixture)
+    const router = createTestRouter()
+    await router.push('/comparisons/comparison-1/progress')
+    await router.isReady()
+    const wrapper = mount(ProgressView, {
+      global: { plugins: [createPinia(), router, Antd] },
+    })
+    await flushPromises()
+
+    await vi.advanceTimersByTimeAsync(1000)
+    await flushPromises()
+
+    expect(getComparisonAnalysisProgress).toHaveBeenCalledTimes(2)
+    expect(startComparisonAnalysis).toHaveBeenCalledWith('comparison-1')
+    expect(wrapper.text()).toContain('近期评论已获取并清洗')
+    wrapper.unmount()
+    vi.useRealTimers()
   })
 })
 
 function createTestRouter() {
-  /** 创建覆盖 M1-D 四个页面的内存路由。by AI.Coding */
+  /** 创建覆盖 M1-E 五个页面的内存路由。by AI.Coding */
   return createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -306,6 +397,11 @@ function createTestRouter() {
         path: '/comparisons/:id/dimensions',
         name: 'comparison-dimensions',
         component: DimensionsView,
+      },
+      {
+        path: '/comparisons/:id/progress',
+        name: 'comparison-progress',
+        component: ProgressView,
       },
     ],
   })

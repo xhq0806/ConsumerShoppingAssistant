@@ -5,8 +5,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, status
 
-from app.api.dependencies import get_comparison_service
+from app.api.dependencies import get_analysis_service, get_comparison_service
 from app.api.schemas.comparisons import (
+    AnalysisProgressResponse,
     ComparabilityWarningResponse,
     ComparisonCreateRequest,
     ComparisonDetailResponse,
@@ -22,6 +23,7 @@ from app.api.schemas.comparisons import (
     UpdatePreferencesRequest,
     UserPreferencesResponse,
 )
+from app.application.analysis_tasks import AnalysisApplicationService, AnalysisProgressView
 from app.application.comparisons import (
     ComparisonApplicationService,
     ComparisonView,
@@ -174,6 +176,45 @@ async def confirm_comparison_dimensions(
     )
 
 
+@router.post(
+    "/{comparison_id}/analysis/start",
+    response_model=AnalysisProgressResponse,
+    operation_id="start_comparison_analysis",
+)
+async def start_comparison_analysis(
+    comparison_id: UUID,
+    service: Annotated[AnalysisApplicationService, Depends(get_analysis_service)],
+) -> AnalysisProgressResponse:
+    """投递 queued 分析任务或幂等返回当前进度。by AI.Coding"""
+    return _analysis_progress_response(await service.request_analysis(comparison_id))
+
+
+@router.post(
+    "/{comparison_id}/analysis/retry",
+    response_model=AnalysisProgressResponse,
+    operation_id="retry_comparison_analysis",
+)
+async def retry_comparison_analysis(
+    comparison_id: UUID,
+    service: Annotated[AnalysisApplicationService, Depends(get_analysis_service)],
+) -> AnalysisProgressResponse:
+    """把可重试的评论采集失败重新排队。by AI.Coding"""
+    return _analysis_progress_response(await service.retry_analysis(comparison_id))
+
+
+@router.get(
+    "/{comparison_id}/analysis/progress",
+    response_model=AnalysisProgressResponse,
+    operation_id="get_comparison_analysis_progress",
+)
+async def get_comparison_analysis_progress(
+    comparison_id: UUID,
+    service: Annotated[AnalysisApplicationService, Depends(get_analysis_service)],
+) -> AnalysisProgressResponse:
+    """查询任务异步评论采集的持久化进度。by AI.Coding"""
+    return _analysis_progress_response(await service.get_analysis_progress(comparison_id))
+
+
 def _summary_response(view: ComparisonView) -> ComparisonSummaryResponse:
     """将应用摘要视图显式映射为创建端点响应。by AI.Coding"""
     # 共享候选 mapper 保证创建和详情端点不会意外暴露不同字段。
@@ -291,4 +332,19 @@ def _dimension_set_response(view: DimensionSetView) -> DimensionSetResponse:
             )
             for item in view.dimensions
         ],
+    )
+
+
+def _analysis_progress_response(view: AnalysisProgressView) -> AnalysisProgressResponse:
+    """显式映射异步分析进度白名单。by AI.Coding"""
+    return AnalysisProgressResponse(
+        comparison_id=view.comparison_id,
+        status=view.status,
+        progress=view.progress,
+        stage=view.stage,
+        message=view.message,
+        fetched_review_count=view.fetched_review_count,
+        valid_review_count=view.valid_review_count,
+        can_retry=view.can_retry,
+        polling_complete=view.polling_complete,
     )

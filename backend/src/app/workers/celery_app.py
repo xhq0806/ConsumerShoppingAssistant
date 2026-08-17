@@ -8,6 +8,7 @@ celery_app = Celery(
     "consumer_shopping_assistant",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
+    include=["app.workers.analysis"],
 )
 celery_app.conf.update(
     task_serializer="json",
@@ -16,6 +17,8 @@ celery_app.conf.update(
     timezone="Asia/Shanghai",
     enable_utc=True,
     task_track_started=True,
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
 )
 
 

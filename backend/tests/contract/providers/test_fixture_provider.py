@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.core.errors import ProviderRateLimitedError
@@ -48,3 +49,13 @@ async def test_fixture_provider_maps_rate_limit_error(
     url = await provider.normalize_url("https://item.taobao.com/item.htm?id=429")
     with pytest.raises(ProviderRateLimitedError):
         await provider.fetch_product(ProductRequest(product_url=url))
+
+
+@pytest.mark.asyncio
+async def test_review_request_hard_limits_single_product_to_500(
+    provider: FixtureCommerceDataProvider,
+) -> None:
+    """评论请求在 DTO 边界拒绝超过 500 条的单商品样本。by AI.Coding"""
+    url = await provider.normalize_url("https://item.taobao.com/item.htm?id=10001")
+    with pytest.raises(ValidationError):
+        ReviewFetchRequest(product_url=url, window_days=30, max_reviews=501)

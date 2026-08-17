@@ -8,9 +8,13 @@ import {
   createComparison,
   generateComparisonDimensions,
   getComparison,
+  getComparisonAnalysisProgress,
   getComparisonDimensions,
   parseComparison,
+  retryComparisonAnalysis,
+  startComparisonAnalysis,
   updateComparisonPreferences,
+  type AnalysisProgress,
   type ComparisonDetail,
   type ConfirmDimensionsPayload,
   type ConfirmProductsPayload,
@@ -31,11 +35,15 @@ type ComparisonAction =
   | 'generating-dimensions'
   | 'loading-dimensions'
   | 'confirming-dimensions'
+  | 'starting-analysis'
+  | 'loading-progress'
+  | 'retrying-analysis'
 
 export const useComparisonStore = defineStore('comparison', () => {
   /** 管理当前任务详情、请求状态和仅含任务 ID 的恢复提示。by AI.Coding */
   const comparison = ref<ComparisonDetail | null>(null)
   const dimensionSet = ref<DimensionSet | null>(null)
+  const analysisProgress = ref<AnalysisProgress | null>(null)
   const action = ref<ComparisonAction | null>(null)
   const error = ref<ApiError | null>(null)
   const lastComparisonId = ref(localStorage.getItem(LAST_COMPARISON_KEY))
@@ -170,6 +178,61 @@ export const useComparisonStore = defineStore('comparison', () => {
     }
   }
 
+  async function startAnalysis(comparisonId: string): Promise<AnalysisProgress> {
+    /** 投递 queued 任务并保存服务端返回的初始进度。by AI.Coding */
+    error.value = null
+    action.value = 'starting-analysis'
+    try {
+      const progress = await startComparisonAnalysis(comparisonId)
+      analysisProgress.value = progress
+      return progress
+    } catch (cause) {
+      error.value = normalizeError(cause)
+      throw error.value
+    } finally {
+      action.value = null
+    }
+  }
+
+  async function loadAnalysisProgress(comparisonId: string): Promise<AnalysisProgress> {
+    /** 轮询服务端持久化分析进度。by AI.Coding */
+    error.value = null
+    action.value = 'loading-progress'
+    try {
+      const progress = await getComparisonAnalysisProgress(comparisonId)
+      analysisProgress.value = progress
+      if (comparison.value?.id === comparisonId) {
+        comparison.value = {
+          ...comparison.value,
+          status: progress.status,
+          progress: progress.progress,
+        }
+      }
+      return progress
+    } catch (cause) {
+      error.value = normalizeError(cause)
+      throw error.value
+    } finally {
+      action.value = null
+    }
+  }
+
+  async function retryAnalysis(comparisonId: string): Promise<AnalysisProgress> {
+    /** 把可重试失败重新排队并保存最新进度。by AI.Coding */
+    error.value = null
+    action.value = 'retrying-analysis'
+    try {
+      const progress = await retryComparisonAnalysis(comparisonId)
+      analysisProgress.value = progress
+      return progress
+    } catch (cause) {
+      error.value = normalizeError(cause)
+      throw error.value
+    } finally {
+      action.value = null
+    }
+  }
+
   function clearError(): void {
     /** 清除页面已展示的请求错误。by AI.Coding */
     error.value = null
@@ -184,6 +247,7 @@ export const useComparisonStore = defineStore('comparison', () => {
   return {
     comparison,
     dimensionSet,
+    analysisProgress,
     action,
     error,
     busy,
@@ -195,6 +259,9 @@ export const useComparisonStore = defineStore('comparison', () => {
     generateDimensions,
     loadDimensions,
     confirmDimensions,
+    startAnalysis,
+    loadAnalysisProgress,
+    retryAnalysis,
     clearError,
   }
 })

@@ -66,6 +66,14 @@ class ProviderInvalidResponseError(ProviderError):
     title = "外部数据响应无效"
 
 
+class AnalysisDispatchError(AppError):
+    """表示分析任务无法提交到异步队列。by AI.Coding"""
+
+    status_code = 503
+    code = "ANALYSIS_DISPATCH_UNAVAILABLE"
+    title = "分析任务暂时无法排队"
+
+
 class URLSecurityError(InputError):
     code = "UNSAFE_PRODUCT_URL"
     title = "商品链接不安全或不受支持"

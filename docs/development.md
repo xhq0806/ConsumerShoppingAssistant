@@ -11,7 +11,7 @@
 - `backend/tests/integration`：PostgreSQL/Testcontainers 等集成测试。
 - `frontend/src/api`：统一请求、ProblemDetails 和 Comparison API 类型。
 - `frontend/src/stores`：Pinia 对比流程状态。
-- `frontend/src/views/comparisons`：商品输入、商品确认、购买偏好和动态维度页面。
+- `frontend/src/views/comparisons`：商品输入、商品确认、购买偏好、动态维度和任务进度页面。
 - `docs/spikes`：高风险技术与合规预研。
 
 ## Windows 开发前置条件
@@ -78,7 +78,7 @@ alembic check
 M1-D 通过 `0006` 写入通用和 Fixture 手机品类维度种子，不修改 Schema。当前 head 为
 `0006`。Repository 不自行提交事务，由应用用例或 UnitOfWork 控制提交与回滚。
 
-## M1-D 对比 API 与页面
+## M1-E 对比 API、Worker 与页面
 
 ```text
 POST /api/v1/comparisons
@@ -89,6 +89,9 @@ PUT  /api/v1/comparisons/{comparison_id}/preferences
 POST /api/v1/comparisons/{comparison_id}/dimensions/recommendations
 GET  /api/v1/comparisons/{comparison_id}/dimensions
 POST /api/v1/comparisons/{comparison_id}/dimensions/confirm
+POST /api/v1/comparisons/{comparison_id}/analysis/start
+POST /api/v1/comparisons/{comparison_id}/analysis/retry
+GET  /api/v1/comparisons/{comparison_id}/analysis/progress
 ```
 
 - 创建接口在事务外规范化 URL，并支持不保存原始键的创建幂等。
@@ -101,7 +104,12 @@ POST /api/v1/comparisons/{comparison_id}/dimensions/confirm
 - 维度推荐仅使用已注册目录、共同品类、最新商品事实和受控关注点同义词，不调用 LLM。
 - 首次生成会持久化选中与未选中的全部候选；重复生成不会覆盖既有候选。
 - 确认请求按有序 code 整体保存，零维度被拒绝；成功后任务依次进入
-  `ready_for_analysis` 和 `queued`，但不启动 Worker。
+  `ready_for_analysis` 和 `queued`。
+- 进度页调用 start API 投递 Celery；重复消息通过任务根行锁和 queued 状态门禁安全忽略。
+- Worker 在事务外获取 Fixture 评论，全部商品成功后才原子保存清洗后的 `raw_reviews`。
+- 评论执行 NFKC、空白收敛、窗口过滤、受控无意义文本过滤和商品内稳定正文去重。
+- 成功后状态为 `processing`、进度为 45，表示评论数据已准备，不表示主题分析或报告完成。
+- Provider unavailable/rate limit 失败可重新排队；其他失败拒绝 retry。
 - API 尚无用户身份与任务归属控制，只能用于本地开发，不得直接公网开放。
 
 前端路由：
@@ -111,6 +119,7 @@ POST /api/v1/comparisons/{comparison_id}/dimensions/confirm
 /comparisons/:id/confirm               商品事实与 SKU 确认
 /comparisons/:id/preferences           评论范围与购买偏好
 /comparisons/:id/dimensions            动态维度调整与确认
+/comparisons/:id/progress              评论采集与清洗进度
 ```
 
 - 页面恢复以路由中的任务 ID 和服务端详情为真源，不依赖 Pinia 内存状态。
@@ -118,6 +127,10 @@ POST /api/v1/comparisons/{comparison_id}/dimensions/confirm
 - Nginx 容器将 `/api/` 代理到 `api:8000`，并使用 SPA fallback 支持深层路由刷新。
 - 原始商品链接仅存在于创建前的表单内存中，不写入浏览器持久化。
 - 维度页支持重点/其他可选、搜索、增删、拖拽、顺序按钮、理由和数据风险。
+- 进度页自动启动 queued 任务并每秒轮询；临时请求失败后继续重试，processing/failed 时停止。
+
+Compose 包含一次性 `migrate` 服务，API 和 Worker 仅在迁移成功后启动。Celery 同步 task
+每次在自身事件循环内创建并释放 asyncpg engine，避免连续任务复用已关闭事件循环连接。
 
 ## 前端质量命令
 
@@ -129,12 +142,12 @@ npm run test -- --run
 npm run build
 ```
 
-M1-D 的浏览器验收覆盖完整四步流程、维度刷新恢复、增删排序、queued 确认、桌面端和
+M1-E 的浏览器验收覆盖完整五步流程、真实 Celery Worker、评论清洗计数、刷新恢复、桌面端和
 `390x844` 移动端布局。验收截图位于：
 
 ```text
-docs/assets/m1d-dimensions-desktop.png
-docs/assets/m1d-dimensions-mobile.png
+docs/assets/m1e-progress-desktop.png
+docs/assets/m1e-progress-mobile.png
 ```
 
 ## 新 Commerce Provider 规则

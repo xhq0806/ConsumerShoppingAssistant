@@ -1,8 +1,8 @@
 <script setup lang="ts">
-// M1-D 输入、商品确认、偏好和维度阶段导航。by AI.Coding
+// M1-E 输入、确认、偏好、维度和任务进度导航。by AI.Coding
 
 defineProps<{
-  current: 0 | 1 | 2 | 3
+  current: 0 | 1 | 2 | 3 | 4
 }>()
 
 const items = [
@@ -10,6 +10,7 @@ const items = [
   { title: '商品确认', description: '核对事实与 SKU' },
   { title: '购买偏好', description: '预算、场景与关注点' },
   { title: '对比维度', description: '调整重点与顺序' },
+  { title: '任务进度', description: '获取并清洗评论' },
 ]
 </script>
 
@@ -27,7 +28,7 @@ const items = [
 }
 
 .flow-steps :deep(.ant-steps) {
-  max-width: 760px;
+  max-width: 940px;
   margin: 0 auto;
 }
 

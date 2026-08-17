@@ -2,7 +2,7 @@
 
 面向普通消费者的智能购物决策助手。用户将在后续里程碑中提交 2～3 个候选商品，系统依据商品事实、品牌资料、近期评论和用户偏好生成可解释、可追溯的比较报告。
 
-## 当前状态：M1-D 动态维度推荐与维度确认闭环
+## 当前状态：M1-E 异步评论采集与任务进度闭环
 
 当前版本已经完成：
 
@@ -11,6 +11,7 @@
 - M1-B：创建对比草稿、Fixture 商品解析、任务详情查询、SKU 确认和基础可比性检查；
 - M1-C：商品链接输入、解析与确认页面，以及预算、使用场景、关注点和禁忌项的保存与恢复；
 - M1-D：受控通用/手机维度种子、确定性推荐、维度增删排序、刷新恢复和 queued 状态推进；
+- M1-E：Compose 自动迁移、Celery 评论采集、确定性清洗、失败重试和任务进度页面；
 - ProblemDetails、trace ID、URL 安全、创建幂等和事务回滚；
 - Fixture Commerce Provider、Fake LLM Gateway 与脱敏审计；
 - 前后端完整测试、PostgreSQL 16 迁移生命周期、响应式页面和 Docker Compose 本地质量门禁。
@@ -26,12 +27,15 @@ PUT  /api/v1/comparisons/{comparison_id}/preferences
 POST /api/v1/comparisons/{comparison_id}/dimensions/recommendations
 GET  /api/v1/comparisons/{comparison_id}/dimensions
 POST /api/v1/comparisons/{comparison_id}/dimensions/confirm
+POST /api/v1/comparisons/{comparison_id}/analysis/start
+POST /api/v1/comparisons/{comparison_id}/analysis/retry
+GET  /api/v1/comparisons/{comparison_id}/analysis/progress
 ```
 
 Web 入口提供 `/`、`/comparisons/:id/confirm`、`/comparisons/:id/preferences` 和
-`/comparisons/:id/dimensions` 四步流程。尚未实现评论分析、Celery/LangGraph 业务编排、
-报告页面、用户鉴权和真实淘宝 Provider。当前 API 与页面只用于本地开发和 Fixture 验证，
-不应直接作为公网生产服务。
+`/comparisons/:id/dimensions`、`/comparisons/:id/progress` 五步流程。尚未实现评论主题/
+情感注解、指标计算、LangGraph、报告页面、用户鉴权和真实淘宝 Provider。当前 API 与页面
+只用于本地开发和 Fixture 验证，不应直接作为公网生产服务。
 
 ## 合规声明
 
@@ -52,9 +56,10 @@ Web 入口提供 `/`、`/comparisons/:id/confirm`、`/comparisons/:id/preference
 cp .env.example .env
 docker compose -f docker/docker-compose.yml config
 docker compose -f docker/docker-compose.yml up --build -d
-docker compose -f docker/docker-compose.yml exec -T api alembic upgrade head
 docker compose -f docker/docker-compose.yml ps
 ```
+
+Compose 的一次性 `migrate` 服务会在 API 和 Worker 启动前自动执行 `alembic upgrade head`。
 
 入口：
 
@@ -123,6 +128,6 @@ Windows 下可一次执行完整门禁：
 powershell -ExecutionPolicy Bypass -File scripts/verify-local.ps1
 ```
 
-更完整的开发说明见 [`docs/development.md`](docs/development.md)，M1-D 验收见
-[`docs/m1d-verification.md`](docs/m1d-verification.md)，淘宝接入结论见
+更完整的开发说明见 [`docs/development.md`](docs/development.md)，M1-E 验收见
+[`docs/m1e-verification.md`](docs/m1e-verification.md)，淘宝接入结论见
 [`docs/spikes/taobao-data-provider.md`](docs/spikes/taobao-data-provider.md)。

@@ -23,5 +23,10 @@ export default createRouter({
       name: 'comparison-dimensions',
       component: () => import('@/views/comparisons/DimensionsView.vue'),
     },
+    {
+      path: '/comparisons/:id/progress',
+      name: 'comparison-progress',
+      component: () => import('@/views/comparisons/ProgressView.vue'),
+    },
   ],
 })

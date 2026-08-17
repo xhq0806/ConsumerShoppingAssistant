@@ -61,6 +61,14 @@ def test_terminal_status_cannot_return_to_working_state() -> None:
         validate_status_transition(ComparisonStatus.COMPLETED, ComparisonStatus.PROCESSING)
 
 
+def test_failed_task_can_be_requeued_by_guarded_application_use_case() -> None:
+    """领域状态图允许应用层对可重试分析失败重新排队。by AI.Coding"""
+    assert (
+        validate_status_transition(ComparisonStatus.FAILED, ComparisonStatus.QUEUED)
+        is ComparisonStatus.QUEUED
+    )
+
+
 @pytest.mark.parametrize("value", [30, 60])
 def test_review_window_accepts_supported_values(value: int) -> None:
     """评论窗口接受 30 和 60 天。by AI.Coding"""

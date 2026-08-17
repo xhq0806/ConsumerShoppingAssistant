@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.infrastructure.db.models import AnalysisMetric, RawReview
+from app.infrastructure.db.models import AnalysisMetric, ComparisonProduct, RawReview
 from app.infrastructure.db.repository import Repository
 from app.providers.commerce.dto import ReviewDTO
 
@@ -46,3 +46,13 @@ class AnalysisRepository(Repository[RawReview]):
             .order_by(AnalysisMetric.metric_type.asc())
         )
         return list(result)
+
+    async def count_reviews_for_comparison(self, comparison_id: uuid.UUID) -> int:
+        """统计任务全部候选已持久化的有效评论数。by AI.Coding"""
+        count = await self._session.scalar(
+            select(func.count())
+            .select_from(RawReview)
+            .join(ComparisonProduct, ComparisonProduct.id == RawReview.comparison_product_id)
+            .where(ComparisonProduct.comparison_id == comparison_id)
+        )
+        return int(count or 0)

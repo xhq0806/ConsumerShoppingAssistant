@@ -138,6 +138,7 @@ async function confirmDimensions(): Promise<void> {
       dimension_codes: selectedCodes.value,
     })
     hydrateSelection(confirmed.dimensions)
+    await router.push({ name: 'comparison-progress', params: { id: comparisonId.value } })
   } catch {
     // store 持有页面可展示错误。
   }
