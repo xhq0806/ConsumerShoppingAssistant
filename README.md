@@ -13,7 +13,7 @@
 - M1-D：受控通用/手机维度种子、确定性推荐、维度增删排序、刷新恢复和 queued 状态推进；
 - M1-E：Compose 自动迁移、Celery 评论采集、确定性清洗、失败重试和任务进度页面；
 - ProblemDetails、trace ID、URL 安全、创建幂等和事务回滚；
-- Fixture Commerce Provider、Fake LLM Gateway 与脱敏审计；
+- Fixture Commerce Provider、Fake/DeepSeek LLM Gateway 与脱敏审计；
 - 前后端完整测试、PostgreSQL 16 迁移生命周期、响应式页面和 Docker Compose 本地质量门禁。
 
 当前提供以下开发基线 API：
@@ -119,6 +119,47 @@ LLM_PROVIDER=fake
 ```
 
 Fixture 数据全部为内部合成样本，不来自真实用户或真实淘宝商品。Fake LLM 仅用于验证结构化输出、超时、重试和审计契约。
+
+## DeepSeek API 配置
+
+代码已经提供 DeepSeek Chat Completions Adapter，但默认不会连接真实模型。填写 Key 后可切换：
+
+```env
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=由本地开发者填写
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+DEEPSEEK_ANALYSIS_MODEL=deepseek-v4-flash
+DEEPSEEK_ANALYSIS_THINKING=false
+DEEPSEEK_ANALYSIS_MAX_TOKENS=2000
+
+DEEPSEEK_REPORT_MODEL=deepseek-v4-pro
+DEEPSEEK_REPORT_THINKING=true
+DEEPSEEK_REPORT_REASONING_EFFORT=high
+DEEPSEEK_REPORT_MAX_TOKENS=8000
+```
+
+- API Key 使用 `SecretStr` 读取，不进入日志、异常或模型审计。
+- analysis profile 使用 JSON Output 和关闭思考；report profile 使用 V4 Pro 和 high 思考。
+- 所有模型调用继续通过 `LLMGateway` 和 Pydantic response model 校验。
+- 当前 M1-E 评论采集 Worker 尚未调用 LLM；DeepSeek Adapter 将供后续评论注解和报告阶段使用。
+- `.env` 不得提交，示例文件只保留空 Key。
+
+填写 Key 并重启服务后，可执行最小连通性检查：
+
+```bash
+cd backend
+python -m app.providers.llm.deepseek_smoke
+```
+
+Docker Compose：
+
+```bash
+docker compose -f docker/docker-compose.yml exec -T api \
+  python -m app.providers.llm.deepseek_smoke
+```
+
+命令只打印 provider、model、token 和延迟，不打印 API Key、Prompt 或响应正文。
 
 这是个人项目，当前以本地可复现质量门禁作为验收依据，不要求提供远端 CI 成功记录。
 

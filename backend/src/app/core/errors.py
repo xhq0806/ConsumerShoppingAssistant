@@ -83,11 +83,40 @@ class LLMError(AppError):
     status_code = 503
     code = "LLM_ERROR"
     title = "模型服务错误"
+    retryable = True
 
 
 class LLMTimeoutError(LLMError):
     code = "LLM_TIMEOUT"
     title = "模型服务超时"
+
+
+class LLMAuthenticationError(LLMError):
+    code = "LLM_AUTHENTICATION_ERROR"
+    title = "模型服务鉴权失败"
+    retryable = False
+
+
+class LLMRequestInvalidError(LLMError):
+    code = "LLM_REQUEST_INVALID"
+    title = "模型请求参数无效"
+    retryable = False
+
+
+class LLMQuotaExhaustedError(LLMError):
+    code = "LLM_QUOTA_EXHAUSTED"
+    title = "模型服务额度不足"
+    retryable = False
+
+
+class LLMRateLimitedError(LLMError):
+    code = "LLM_RATE_LIMITED"
+    title = "模型服务请求受限"
+
+
+class LLMProviderUnavailableError(LLMError):
+    code = "LLM_PROVIDER_UNAVAILABLE"
+    title = "模型服务暂不可用"
 
 
 class StructuredOutputInvalidError(LLMError):

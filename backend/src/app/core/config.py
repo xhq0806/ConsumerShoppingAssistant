@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -29,10 +32,19 @@ class Settings(BaseSettings):
     review_max_per_product: int = Field(default=500, ge=1, le=500)
 
     commerce_provider: Literal["fixture"] = "fixture"
-    llm_provider: Literal["fake"] = "fake"
+    llm_provider: Literal["fake", "deepseek"] = "fake"
     llm_model: str = "fake-structured-model"
     llm_timeout_seconds: float = Field(default=10, gt=0, le=120)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
+    deepseek_api_key: SecretStr | None = None
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_analysis_model: Literal["deepseek-v4-flash", "deepseek-v4-pro"] = "deepseek-v4-flash"
+    deepseek_report_model: Literal["deepseek-v4-flash", "deepseek-v4-pro"] = "deepseek-v4-pro"
+    deepseek_analysis_thinking: bool = False
+    deepseek_report_thinking: bool = True
+    deepseek_report_reasoning_effort: Literal["high", "max"] = "high"
+    deepseek_analysis_max_tokens: int = Field(default=2000, ge=1)
+    deepseek_report_max_tokens: int = Field(default=8000, ge=1)
     taobao_allowed_hosts: Annotated[tuple[str, ...], NoDecode] = (
         "item.taobao.com",
         "detail.tmall.com",
@@ -47,6 +59,32 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return tuple(host.strip().lower() for host in value.split(",") if host.strip())
         return value
+
+    @field_validator("deepseek_base_url")
+    @classmethod
+    def validate_deepseek_base_url(cls, value: str) -> str:
+        """只接受不含凭据的 HTTPS DeepSeek API 基础地址。by AI.Coding"""
+        normalized = value.strip().rstrip("/")
+        parsed = urlsplit(normalized)
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise ValueError("DEEPSEEK_BASE_URL 必须是有效 HTTPS 地址")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("DEEPSEEK_BASE_URL 不能包含用户名或密码")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_deepseek_credentials(self) -> Settings:
+        """启用 DeepSeek 时要求提供非空 API Key，fake 模式允许留空。by AI.Coding"""
+        if self.llm_provider != "deepseek":
+            return self
+        value = (
+            ""
+            if self.deepseek_api_key is None
+            else self.deepseek_api_key.get_secret_value().strip()
+        )
+        if not value:
+            raise ValueError("LLM_PROVIDER=deepseek 时必须配置 DEEPSEEK_API_KEY")
+        return self
 
 
 @lru_cache

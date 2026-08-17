@@ -8,7 +8,7 @@ from uuid import uuid4
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, ValidationError
 
-from app.core.errors import LLMTimeoutError, StructuredOutputInvalidError
+from app.core.errors import LLMError, LLMTimeoutError, StructuredOutputInvalidError
 from app.providers.llm.base import (
     LLMAuditEvent,
     LLMAuditSink,
@@ -63,6 +63,11 @@ class LLMGateway:
             except TimeoutError:
                 last_error = LLMTimeoutError("模型调用超过配置的时间限制。")
                 if attempts > request.max_retries:
+                    break
+                await asyncio.sleep(0)
+            except LLMError as exc:
+                last_error = exc
+                if not exc.retryable or attempts > request.max_retries:
                     break
                 await asyncio.sleep(0)
             except (ValidationError, ValueError, TypeError) as exc:

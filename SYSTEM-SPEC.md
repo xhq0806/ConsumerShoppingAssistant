@@ -1,7 +1,7 @@
 # Consumer Shopping Assistant — 系统行为规格
 
 > 最后更新：2026-08-17
-> 当前版本：v0.6.0-m1e
+> 当前版本：v0.6.1-deepseek-config
 > 维护方式：仅记录已经实现并经过验证的系统行为；计划能力不得提前写入本文件
 > M0 验收：`docs/m0-verification.md`（PASS_WITH_CONCERNS）
 > M1-A 验收：`docs/m1a-verification.md`（PASS_WITH_CONCERNS）
@@ -30,6 +30,7 @@
 | 动态维度调整、确认与 queued 边界 | v0.5.0-m1d | ✅ 已实现 | 2026-08-11 | `docs/specs/m1d-dynamic-dimensions.md` |
 | Celery Fixture 评论采集与确定性清洗 | v0.6.0-m1e | ✅ 已实现 | 2026-08-17 | `docs/specs/m1e-async-review-ingestion.md` |
 | 分析任务进度、失败重试与刷新恢复 | v0.6.0-m1e | ✅ 已实现 | 2026-08-17 | `docs/specs/m1e-async-review-ingestion.md` |
+| DeepSeek Chat Completions 配置与 Adapter | v0.6.1-deepseek-config | ✅ 已实现 | 2026-08-17 | `docs/specs/deepseek-llm-adapter.md` |
 | 淘宝商品 URL 安全 | v0.1.0-m0 | ✅ 已实现 | 2026-08-05 | `docs/specs/m0-engineering-foundation.md` |
 | Commerce Provider 与 Fixture | v0.1.0-m0 | ✅ 已实现 | 2026-08-05 | `docs/specs/m0-engineering-foundation.md` |
 | 供应商中立 LLM Gateway | v0.1.0-m0 | ✅ 已实现 | 2026-08-05 | `docs/specs/m0-engineering-foundation.md` |
@@ -48,7 +49,7 @@
 - 报告生成、图表、报告追问业务和管理端；
 - 用户身份、任务归属、多租户权限和匿名访问凭证；
 - 真实淘宝生产数据 Provider；
-- 真实 LLM 供应商适配器。
+- 将 DeepSeek analysis profile 接入评论注解、将 report profile 接入报告生成。
 
 上述能力必须通过后续里程碑实现并验收后，才能合并到本文件。
 
@@ -106,6 +107,9 @@ LLM_PROVIDER=fake
 
 未显式变更并通过对应验收前，系统不得默认连接真实淘宝数据源或真实 LLM 服务。
 
+DeepSeek Adapter 已实现，但默认仍为 `fake`。只有同时设置
+`LLM_PROVIDER=deepseek` 和非空 `DEEPSEEK_API_KEY` 才创建真实模型客户端。
+
 ## 4. 配置行为
 
 ### 4.1 配置来源
@@ -122,6 +126,7 @@ LLM_PROVIDER=fake
 - Celery broker/result backend；
 - Commerce Provider；
 - LLM Provider、模型、超时和重试次数；
+- DeepSeek API Key、基础地址、analysis/report 模型、思考模式、reasoning effort 和 max tokens；
 - 淘宝允许域名。
 
 `TAOBAO_ALLOWED_HOSTS` 使用逗号分隔字符串，例如：
@@ -322,7 +327,17 @@ Fixture 数据不得包含真实淘宝商品、真实评论、账号、Cookie、
 
 ### 9.1 当前供应商边界
 
-M0 只启用 `fake` LLM Provider。模型工厂不创建真实供应商客户端；业务模块不得直接依赖具体模型供应商 SDK。
+默认仍使用 `fake` LLM Provider。模型工厂同时支持可选 `deepseek` Provider，并通过项目原生
+`httpx` Adapter 调用 DeepSeek `/chat/completions`；业务模块只依赖 `LLMGateway`，不得直接
+导入 DeepSeek 或其他供应商客户端。
+
+DeepSeek 提供两个配置 profile：
+
+- `analysis`：默认 `deepseek-v4-flash`、thinking disabled、max tokens 2000；
+- `report`：默认 `deepseek-v4-pro`、thinking enabled、reasoning effort high、max tokens 8000。
+
+启用 `LLM_PROVIDER=deepseek` 时必须提供非空 `DEEPSEEK_API_KEY`。Key 使用 `SecretStr`，
+基础地址必须为不含内嵌凭据的 HTTPS URL。
 
 ### 9.2 结构化调用
 
@@ -332,12 +347,18 @@ M0 只启用 `fake` LLM Provider。模型工厂不创建真实供应商客户端
 - 使用调用方提供的 Pydantic response model 校验响应；
 - 支持字符串 JSON 和字典响应内容；
 - 返回校验后的对象、provider、model、token usage、latency、attempt count 和 audit event ID。
+- DeepSeek Adapter 使用非流式 Chat Completions 和 `response_format={"type":"json_object"}`；
+- Adapter 自动添加只输出 JSON 对象的系统约束，不接收多模态或工具消息；
+- DeepSeek `reasoning_content` 不进入 LangChain message、业务结果或审计。
 
 ### 9.3 超时与重试
 
 - 单次调用受 `timeout_seconds` 限制；
 - 超时映射为 `LLM_TIMEOUT`；
 - JSON、类型或 Pydantic 校验失败映射为 `LLM_STRUCTURED_OUTPUT_INVALID`；
+- DeepSeek 401/403 映射为不可重试 `LLM_AUTHENTICATION_ERROR`；
+- DeepSeek 400/422 映射为不可重试 `LLM_REQUEST_INVALID`，402 映射为不可重试 `LLM_QUOTA_EXHAUSTED`；
+- DeepSeek 429 映射为 `LLM_RATE_LIMITED`，5xx/连接故障映射为 `LLM_PROVIDER_UNAVAILABLE`；
 - 总尝试次数为首次调用加 `max_retries`；配置约束为 timeout `>0且<=120` 秒、重试 `0..5`，默认分别为 10 秒和 2 次重试；
 - 重试耗尽后记录失败审计并抛出统一错误。
 
@@ -351,6 +372,9 @@ M0 只启用 `fake` LLM Provider。模型工厂不创建真实供应商客户端
 - latency、attempts 和 token usage。
 
 审计不得记录完整 Prompt、完整评论、模型响应正文、Cookie、Authorization 或 API Key。`model_runs` 只保存 purpose、provider、model、Prompt version、token、时延、attempts、状态、错误码和必要关联；首次 Gateway 调用的 attempts 至少为 1。测试继续通过内存 sink 断言审计字段和正文脱敏，持久化 sink 复用同一 `LLMAuditSink` Protocol。
+
+当前 M1-E 评论采集和清洗流程不调用 DeepSeek。Adapter 只完成配置与契约基线，后续评论
+注解和报告用例分别选择 analysis/report profile。
 
 ## 10. 前端基线
 
@@ -389,7 +413,7 @@ M0 只启用 `fake` LLM Provider。模型工厂不创建真实供应商客户端
 - Testcontainers PostgreSQL 集成测试；
 - Alembic upgrade/current/check。
 
-M1-E 本地完整验收为 168 项后端测试全部通过；Ruff、format 和 mypy 同时通过，Alembic
+当前本地完整验收为 179 项后端测试全部通过；Ruff、format 和 mypy 同时通过，Alembic
 head 保持 `0006` 且无 metadata drift。
 
 ### 11.2 前端

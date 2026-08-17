@@ -36,7 +36,8 @@ COMMERCE_PROVIDER=fixture
 LLM_PROVIDER=fake
 ```
 
-当前开发基线不接受真实淘宝 Cookie、Authorization、账号或登录态。真实 LLM 供应商也尚未启用。
+当前开发基线不接受真实淘宝 Cookie、Authorization、账号或登录态。DeepSeek Adapter 已
+实现，但默认 `LLM_PROVIDER=fake`，未配置本地 API Key 时不会连接真实模型。
 
 ## 后端质量命令
 
@@ -173,6 +174,35 @@ docs/assets/m1e-progress-mobile.png
 - 审计只记录 purpose、模型、耗时、token、状态、错误码、trace ID、重试次数和 prompt version；
 - 禁止记录完整 Prompt、评论、响应正文、Cookie、Authorization 或 API Key；
 - Adapter 必须通过结构化输出、超时、重试、失败和审计契约测试。
+
+### DeepSeek 配置
+
+```env
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=由本地开发者填写
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_ANALYSIS_MODEL=deepseek-v4-flash
+DEEPSEEK_REPORT_MODEL=deepseek-v4-pro
+DEEPSEEK_ANALYSIS_THINKING=false
+DEEPSEEK_REPORT_THINKING=true
+DEEPSEEK_REPORT_REASONING_EFFORT=high
+```
+
+- analysis profile 使用 `/chat/completions`、`response_format=json_object` 和非思考模式。
+- report profile 使用 V4 Pro、思考模式和 high reasoning effort。
+- Adapter 自动增加只输出 JSON 的系统约束，但业务 Prompt 仍需声明具体字段和含义。
+- DeepSeek 空 content、无效 JSON 或 Pydantic 校验失败继续由 Gateway 重试。
+- 400/422 无效请求、401/403 鉴权和 402 额度不足不重试；429、5xx、连接错误和超时映射为受控 LLM 错误。
+- Adapter 不保存 `reasoning_content`，审计只记录 provider/model/token/时延/状态。
+- 当前 M1-E 不调用模型；后续评论注解用例再通过 analysis profile 接入。
+
+配置完成后的最小连通性检查：
+
+```bash
+python -m app.providers.llm.deepseek_smoke
+```
+
+该命令会产生一次最小真实 API 调用，只输出非敏感摘要。
 
 ## 淘宝生产发布门禁
 
