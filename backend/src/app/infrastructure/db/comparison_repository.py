@@ -16,6 +16,7 @@ from app.infrastructure.db.models import (
     ComparisonTask,
     ProductSku,
     ProductSnapshot,
+    TaskDimension,
     TaskEvent,
 )
 from app.infrastructure.db.repository import Repository
@@ -70,6 +71,7 @@ class ComparisonRepository(Repository[ComparisonTask]):
             selectinload(ComparisonTask.products).selectinload(ComparisonProduct.skus),
             selectinload(ComparisonTask.products).selectinload(ComparisonProduct.snapshots),
             selectinload(ComparisonTask.events),
+            selectinload(ComparisonTask.dimensions).selectinload(TaskDimension.dimension),
         )
         result = await self._session.execute(statement)
         return result.unique().scalars().one_or_none()
@@ -84,6 +86,7 @@ class ComparisonRepository(Repository[ComparisonTask]):
                 selectinload(ComparisonTask.products).selectinload(ComparisonProduct.skus),
                 selectinload(ComparisonTask.products).selectinload(ComparisonProduct.snapshots),
                 selectinload(ComparisonTask.events),
+                selectinload(ComparisonTask.dimensions).selectinload(TaskDimension.dimension),
             )
         )
         result = await self._session.scalars(statement)

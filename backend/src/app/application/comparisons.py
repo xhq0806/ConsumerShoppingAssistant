@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -30,12 +31,21 @@ from app.domain.comparisons import (
     validate_unique_candidates,
 )
 from app.domain.comparisons.preferences import UserPreferences
+from app.domain.dimensions import validate_dimension_confirmation
+from app.domain.dimensions.recommendation import (
+    DimensionCandidate,
+    DimensionRecommendation,
+    recommend_dimensions,
+)
 from app.domain.products import ProductParseStatus
+from app.infrastructure.db.catalog_repository import CatalogRepository
 from app.infrastructure.db.comparison_repository import ComparisonRepository
 from app.infrastructure.db.models import (
     ComparisonProduct,
     ComparisonTask,
+    DimensionDefinition,
     ProductSnapshot,
+    TaskDimension,
 )
 from app.infrastructure.db.transaction import UnitOfWork
 from app.providers.commerce.base import CommerceDataProvider
@@ -75,6 +85,13 @@ class UpdatePreferencesCommand:
     usage_scenarios: tuple[str, ...]
     priority_concerns: tuple[str, ...]
     deal_breakers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ConfirmDimensionsCommand:
+    """承载用户最终确认的有序维度 code。by AI.Coding"""
+
+    dimension_codes: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -147,6 +164,35 @@ class ComparisonView:
     events: tuple[EventView, ...]
     preferences: UserPreferences | None = None
     warnings: tuple[ComparabilityWarning, ...] = ()
+
+
+@dataclass(frozen=True)
+class DimensionView:
+    """定义动态维度 API 可安全暴露的单项视图。by AI.Coding"""
+
+    code: str
+    name: str
+    source_type: str
+    selected: bool
+    position: int | None
+    user_selected: bool
+    reason: str
+    data_risk: str
+    has_difference: bool
+    affects_recommendation: bool
+    user_removable: bool
+    description: str
+
+
+@dataclass(frozen=True)
+class DimensionSetView:
+    """定义任务维度候选、状态和恢复信息。by AI.Coding"""
+
+    comparison_id: UUID
+    status: str
+    category: str | None
+    generated: bool
+    dimensions: tuple[DimensionView, ...]
 
 
 class ComparisonApplicationService:
@@ -395,6 +441,140 @@ class ComparisonApplicationService:
             assert loaded is not None
             return self._to_view(loaded)
 
+    async def generate_dimension_recommendations(self, comparison_id: UUID) -> DimensionSetView:
+        """首次生成并持久化任务全部候选维度，重复调用返回既有结果。by AI.Coding"""
+        async with self._uow_factory() as uow:
+            repository = self._repository(uow)
+            catalog = self._catalog_repository(uow)
+            task = await self._required_task(repository, comparison_id, for_update=True)
+            if task.status is not ComparisonStatus.AWAITING_DIMENSION_CONFIRMATION:
+                raise DomainConflictError("当前任务状态不允许生成维度推荐")
+            if task.dimensions:
+                return self._to_dimension_set_view(task)
+            category = self._common_category(task)
+            definitions = await catalog.list_enabled_dimensions(category=category)
+            if not definitions:
+                raise DomainConflictError("当前商品品类尚未配置可用维度")
+            recommendations = self._recommendations_for(task, definitions)
+            definitions_by_code = {definition.code: definition for definition in definitions}
+            for recommendation in recommendations:
+                definition = definitions_by_code[recommendation.code]
+                catalog.add_task_dimension(
+                    TaskDimension(
+                        comparison_id=task.id,
+                        dimension_id=definition.id,
+                        selected=recommendation.selected,
+                        position=recommendation.position,
+                        user_selected=False,
+                        selection_reason=recommendation.reason,
+                    )
+                )
+            repository.add_event(
+                comparison_id=task.id,
+                stage=TaskStage.DIMENSION_CONFIRMATION,
+                event_type=TaskEventType.INFO,
+                progress=100,
+                message="动态对比维度已生成。",
+                details={
+                    "candidate_count": len(recommendations),
+                    "selected_count": sum(item.selected for item in recommendations),
+                },
+            )
+            session = self._session(uow)
+            await session.flush()
+            task_id = task.id
+            session.expire_all()
+            loaded = await repository.get_detail(task_id)
+            assert loaded is not None
+            return self._to_dimension_set_view(loaded)
+
+    async def get_dimensions(self, comparison_id: UUID) -> DimensionSetView:
+        """查询任务已持久化的全部维度候选和选择状态。by AI.Coding"""
+        async with self._uow_factory() as uow:
+            task = await self._required_task(self._repository(uow), comparison_id)
+            if (
+                task.status
+                in {
+                    ComparisonStatus.DRAFT,
+                    ComparisonStatus.PARSING,
+                    ComparisonStatus.AWAITING_PRODUCT_CONFIRMATION,
+                }
+                and not task.dimensions
+            ):
+                raise DomainConflictError("任务尚未进入维度确认阶段")
+            return self._to_dimension_set_view(task)
+
+    async def confirm_dimensions(
+        self, comparison_id: UUID, command: ConfirmDimensionsCommand
+    ) -> DimensionSetView:
+        """整体确认有序维度并把任务推进到 queued 分析边界。by AI.Coding"""
+        ordered_codes = validate_dimension_confirmation(command.dimension_codes)
+        async with self._uow_factory() as uow:
+            repository = self._repository(uow)
+            task = await self._required_task(repository, comparison_id, for_update=True)
+            current_codes = tuple(
+                item.dimension.code
+                for item in sorted(
+                    (item for item in task.dimensions if item.selected),
+                    key=lambda item: item.position if item.position is not None else 0,
+                )
+            )
+            if task.status is ComparisonStatus.QUEUED:
+                if current_codes == ordered_codes:
+                    return self._to_dimension_set_view(task)
+                raise DomainConflictError("已排队任务的维度选择不能再次修改")
+            if task.status is not ComparisonStatus.AWAITING_DIMENSION_CONFIRMATION:
+                raise DomainConflictError("当前任务状态不允许确认维度")
+            if not task.dimensions:
+                raise DomainConflictError("请先生成维度推荐")
+            dimensions_by_code = {
+                item.dimension.code: item for item in task.dimensions if item.dimension.enabled
+            }
+            if any(code not in dimensions_by_code for code in ordered_codes):
+                raise DomainConflictError("确认项包含未生成或已停用的维度")
+            required_codes = {
+                item.dimension.code
+                for item in task.dimensions
+                if item.selected and not item.dimension.user_removable
+            }
+            if not required_codes.issubset(ordered_codes):
+                raise DomainConflictError("确认项缺少不可删除的核心维度")
+            original_selected = {item.dimension.code for item in task.dimensions if item.selected}
+            for item in task.dimensions:
+                item.selected = False
+                item.position = None
+                item.user_selected = False
+            session = self._session(uow)
+            await session.flush()
+            for position, code in enumerate(ordered_codes):
+                item = dimensions_by_code[code]
+                item.selected = True
+                item.position = position
+                item.user_selected = code not in original_selected
+                if item.user_selected:
+                    item.selection_reason = "用户从其他可选维度中添加"
+            await session.flush()
+            repository.transition(task, ComparisonStatus.READY_FOR_ANALYSIS)
+            repository.transition(task, ComparisonStatus.QUEUED)
+            task.progress = 0
+            repository.add_event(
+                comparison_id=task.id,
+                stage=TaskStage.QUEUED,
+                event_type=TaskEventType.STATUS_CHANGED,
+                progress=0,
+                message="对比维度已确认，任务已进入分析队列边界。",
+                details={
+                    "status": ComparisonStatus.QUEUED.value,
+                    "selected_count": len(ordered_codes),
+                },
+            )
+            task_id = task.id
+            await session.flush()
+            session.expire_all()
+            loaded = await repository.get_detail(task_id)
+            assert loaded is not None
+            return self._to_dimension_set_view(loaded)
+
     async def _normalize_urls(
         self, product_urls: Sequence[str]
     ) -> tuple[NormalizedProductUrl, ...]:
@@ -464,6 +644,12 @@ class ComparisonApplicationService:
         # UnitOfWork 契约保证 __aenter__ 后 session 存在，断言防止静态类型掩盖生命周期错误。
         assert uow.session is not None
         return ComparisonRepository(uow.session)
+
+    @staticmethod
+    def _catalog_repository(uow: UnitOfWork) -> CatalogRepository:
+        """从当前工作单元创建共享目录仓储。by AI.Coding"""
+        assert uow.session is not None
+        return CatalogRepository(uow.session)
 
     async def _required_task(
         self, repository: ComparisonRepository, comparison_id: UUID, *, for_update: bool = False
@@ -555,6 +741,138 @@ class ComparisonApplicationService:
             preferences=UserPreferences.from_persisted(task.preferences),
             warnings=tuple(warnings),
         )
+
+    @staticmethod
+    def _to_dimension_set_view(task: ComparisonTask) -> DimensionSetView:
+        """把任务目录关系映射为稳定的维度恢复视图。by AI.Coding"""
+        definitions = [item.dimension for item in task.dimensions]
+        computed = {
+            item.code: item
+            for item in ComparisonApplicationService._recommendations_for(task, definitions)
+        }
+        ordered = sorted(
+            task.dimensions,
+            key=lambda item: (
+                0 if item.selected else 1,
+                item.position if item.position is not None else item.dimension.default_priority,
+                item.dimension.code,
+            ),
+        )
+        dimensions = tuple(
+            DimensionView(
+                code=item.dimension.code,
+                name=item.dimension.name,
+                source_type=item.dimension.source_type.value,
+                selected=item.selected,
+                position=item.position,
+                user_selected=item.user_selected,
+                reason=item.selection_reason or computed[item.dimension.code].reason,
+                data_risk=computed[item.dimension.code].data_risk.value,
+                has_difference=computed[item.dimension.code].has_difference,
+                affects_recommendation=item.dimension.affects_recommendation,
+                user_removable=item.dimension.user_removable,
+                description=ComparisonApplicationService._config_text(
+                    item.dimension, "description"
+                ),
+            )
+            for item in ordered
+        )
+        return DimensionSetView(
+            comparison_id=task.id,
+            status=task.status.value,
+            category=ComparisonApplicationService._common_category(task),
+            generated=bool(task.dimensions),
+            dimensions=dimensions,
+        )
+
+    @staticmethod
+    def _recommendations_for(
+        task: ComparisonTask, definitions: Sequence[DimensionDefinition]
+    ) -> tuple[DimensionRecommendation, ...]:
+        """从目录模型、最新商品事实和偏好生成纯领域推荐输入。by AI.Coding"""
+        candidates = tuple(
+            DimensionCandidate(
+                code=definition.code,
+                name=definition.name,
+                source_type=definition.source_type,
+                default_priority=definition.default_priority,
+                affects_recommendation=definition.affects_recommendation,
+                user_removable=definition.user_removable,
+                aliases=ComparisonApplicationService._config_texts(definition, "aliases"),
+                description=ComparisonApplicationService._config_text(definition, "description"),
+            )
+            for definition in definitions
+        )
+        values = {
+            definition.code: tuple(
+                ComparisonApplicationService._dimension_value(product, definition)
+                for product in sorted(task.products, key=lambda item: item.position)
+            )
+            for definition in definitions
+        }
+        preferences = UserPreferences.from_persisted(task.preferences)
+        concerns = () if preferences is None else preferences.priority_concerns
+        return recommend_dimensions(
+            candidates,
+            product_values=values,
+            priority_concerns=concerns,
+        )
+
+    @staticmethod
+    def _common_category(task: ComparisonTask) -> str | None:
+        """取得商品确认阶段已经验证一致的共同品类。by AI.Coding"""
+        for product in sorted(task.products, key=lambda item: item.position):
+            if not product.snapshots:
+                continue
+            category = ComparisonApplicationService._latest_snapshot(product).category
+            if category and category.strip():
+                return unicodedata.normalize("NFKC", category).strip()
+        return None
+
+    @staticmethod
+    def _dimension_value(product: ComparisonProduct, definition: DimensionDefinition) -> str | None:
+        """按目录白名单 field_paths 从最新商品事实中解析可比较值。by AI.Coding"""
+        if not product.snapshots:
+            return None
+        snapshot = ComparisonApplicationService._latest_snapshot(product)
+        for path in ComparisonApplicationService._config_texts(definition, "field_paths"):
+            value: object | None = None
+            if path == "price":
+                value = snapshot.price
+            elif path == "brand":
+                value = snapshot.brand
+            elif path == "shop_name":
+                value = snapshot.shop_name
+            elif path == "after_sales":
+                value = " | ".join(snapshot.after_sales) if snapshot.after_sales else None
+            elif path == "skus":
+                value = " | ".join(sorted(sku.name for sku in product.skus)) or None
+            elif path.startswith("specifications."):
+                value = snapshot.specifications.get(path.removeprefix("specifications."))
+            elif path.startswith("selected_sku.attributes."):
+                attribute = path.removeprefix("selected_sku.attributes.")
+                selected_sku = next(
+                    (sku for sku in product.skus if sku.id == product.selected_sku_id),
+                    None,
+                )
+                value = None if selected_sku is None else selected_sku.attributes.get(attribute)
+            if value is not None and str(value).strip():
+                return str(value)
+        return None
+
+    @staticmethod
+    def _config_texts(definition: DimensionDefinition, key: str) -> tuple[str, ...]:
+        """从目录 config 读取受控字符串数组，忽略畸形值。by AI.Coding"""
+        value = definition.config.get(key)
+        if not isinstance(value, list):
+            return ()
+        return tuple(item for item in value if isinstance(item, str) and item.strip())
+
+    @staticmethod
+    def _config_text(definition: DimensionDefinition, key: str) -> str:
+        """从目录 config 读取单个受控说明文本。by AI.Coding"""
+        value = definition.config.get(key)
+        return value if isinstance(value, str) else ""
 
     @staticmethod
     def _product_to_view(product: ComparisonProduct) -> ProductView:

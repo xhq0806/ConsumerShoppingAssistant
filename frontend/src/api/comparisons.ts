@@ -74,6 +74,31 @@ export interface ComparisonDetail {
   warnings: ComparabilityWarning[]
 }
 
+export type DimensionDataRisk = 'available' | 'partial' | 'unavailable'
+
+export interface DimensionRecommendation {
+  code: string
+  name: string
+  source_type: string
+  selected: boolean
+  position: number | null
+  user_selected: boolean
+  reason: string
+  data_risk: DimensionDataRisk
+  has_difference: boolean
+  affects_recommendation: boolean
+  user_removable: boolean
+  description: string
+}
+
+export interface DimensionSet {
+  comparison_id: string
+  status: string
+  category: string | null
+  generated: boolean
+  dimensions: DimensionRecommendation[]
+}
+
 export interface CreateComparisonPayload {
   product_urls: string[]
   review_window_days: 30 | 60
@@ -93,6 +118,10 @@ export interface UpdatePreferencesPayload {
   usage_scenarios: string[]
   priority_concerns: string[]
   deal_breakers: string[]
+}
+
+export interface ConfirmDimensionsPayload {
+  dimension_codes: string[]
 }
 
 export function createComparison(
@@ -137,6 +166,30 @@ export function updateComparisonPreferences(
   /** 整体替换评论窗口和规范化用户偏好。by AI.Coding */
   return requestJson<ComparisonDetail>(`${COMPARISON_API}/${comparisonId}/preferences`, {
     method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function generateComparisonDimensions(comparisonId: string): Promise<DimensionSet> {
+  /** 首次生成并持久化任务动态维度候选。by AI.Coding */
+  return requestJson<DimensionSet>(
+    `${COMPARISON_API}/${comparisonId}/dimensions/recommendations`,
+    { method: 'POST' },
+  )
+}
+
+export function getComparisonDimensions(comparisonId: string): Promise<DimensionSet> {
+  /** 查询服务端持久化的重点和其他可选维度。by AI.Coding */
+  return requestJson<DimensionSet>(`${COMPARISON_API}/${comparisonId}/dimensions`)
+}
+
+export function confirmComparisonDimensions(
+  comparisonId: string,
+  payload: ConfirmDimensionsPayload,
+): Promise<DimensionSet> {
+  /** 按用户当前顺序整体确认维度并进入 queued 边界。by AI.Coding */
+  return requestJson<DimensionSet>(`${COMPARISON_API}/${comparisonId}/dimensions/confirm`, {
+    method: 'POST',
     body: JSON.stringify(payload),
   })
 }

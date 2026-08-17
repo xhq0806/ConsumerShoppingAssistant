@@ -4,24 +4,38 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import {
   confirmComparisonProducts,
+  confirmComparisonDimensions,
   createComparison,
+  generateComparisonDimensions,
   getComparison,
+  getComparisonDimensions,
   parseComparison,
   updateComparisonPreferences,
   type ComparisonDetail,
+  type ConfirmDimensionsPayload,
   type ConfirmProductsPayload,
   type CreateComparisonPayload,
+  type DimensionSet,
   type UpdatePreferencesPayload,
 } from '@/api/comparisons'
 import { ApiError } from '@/api/request'
 
 const LAST_COMPARISON_KEY = 'shopping-assistant:last-comparison-id'
 
-type ComparisonAction = 'creating' | 'parsing' | 'loading' | 'confirming' | 'saving'
+type ComparisonAction =
+  | 'creating'
+  | 'parsing'
+  | 'loading'
+  | 'confirming'
+  | 'saving'
+  | 'generating-dimensions'
+  | 'loading-dimensions'
+  | 'confirming-dimensions'
 
 export const useComparisonStore = defineStore('comparison', () => {
   /** 管理当前任务详情、请求状态和仅含任务 ID 的恢复提示。by AI.Coding */
   const comparison = ref<ComparisonDetail | null>(null)
+  const dimensionSet = ref<DimensionSet | null>(null)
   const action = ref<ComparisonAction | null>(null)
   const error = ref<ApiError | null>(null)
   const lastComparisonId = ref(localStorage.getItem(LAST_COMPARISON_KEY))
@@ -102,6 +116,60 @@ export const useComparisonStore = defineStore('comparison', () => {
     }
   }
 
+  async function generateDimensions(comparisonId: string): Promise<DimensionSet> {
+    /** 生成候选并保存服务端返回的稳定维度集合。by AI.Coding */
+    error.value = null
+    action.value = 'generating-dimensions'
+    try {
+      const generated = await generateComparisonDimensions(comparisonId)
+      dimensionSet.value = generated
+      return generated
+    } catch (cause) {
+      error.value = normalizeError(cause)
+      throw error.value
+    } finally {
+      action.value = null
+    }
+  }
+
+  async function loadDimensions(comparisonId: string): Promise<DimensionSet> {
+    /** 从服务端恢复候选、选择状态和顺序。by AI.Coding */
+    error.value = null
+    action.value = 'loading-dimensions'
+    try {
+      const loaded = await getComparisonDimensions(comparisonId)
+      dimensionSet.value = loaded
+      return loaded
+    } catch (cause) {
+      error.value = normalizeError(cause)
+      throw error.value
+    } finally {
+      action.value = null
+    }
+  }
+
+  async function confirmDimensions(
+    comparisonId: string,
+    payload: ConfirmDimensionsPayload,
+  ): Promise<DimensionSet> {
+    /** 确认当前有序维度集合并保存 queued 状态。by AI.Coding */
+    error.value = null
+    action.value = 'confirming-dimensions'
+    try {
+      const confirmed = await confirmComparisonDimensions(comparisonId, payload)
+      dimensionSet.value = confirmed
+      if (comparison.value?.id === comparisonId) {
+        comparison.value = { ...comparison.value, status: confirmed.status, progress: 0 }
+      }
+      return confirmed
+    } catch (cause) {
+      error.value = normalizeError(cause)
+      throw error.value
+    } finally {
+      action.value = null
+    }
+  }
+
   function clearError(): void {
     /** 清除页面已展示的请求错误。by AI.Coding */
     error.value = null
@@ -115,6 +183,7 @@ export const useComparisonStore = defineStore('comparison', () => {
 
   return {
     comparison,
+    dimensionSet,
     action,
     error,
     busy,
@@ -123,6 +192,9 @@ export const useComparisonStore = defineStore('comparison', () => {
     loadComparison,
     confirmProducts,
     savePreferences,
+    generateDimensions,
+    loadDimensions,
+    confirmDimensions,
     clearError,
   }
 })

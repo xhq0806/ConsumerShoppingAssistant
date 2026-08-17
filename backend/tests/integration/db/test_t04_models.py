@@ -154,15 +154,23 @@ async def test_dimension_source_types_and_unique_codes(
 ) -> None:
     """五种来源均可保存且重复 code 被拒绝。by AI.Coding"""
     session_factory, _, _ = migrated_database
+    source_codes = [f"source_{index}" for index, _ in enumerate(DimensionSourceType)]
     async with session_factory() as session, session.begin():
         session.add_all(
             [
-                _dimension(code=f"source_{index}", source_type=source_type)
-                for index, source_type in enumerate(DimensionSourceType)
+                _dimension(code=code, source_type=source_type)
+                for code, source_type in zip(source_codes, DimensionSourceType, strict=True)
             ]
         )
         await session.flush()
-        assert await session.scalar(select(func.count()).select_from(DimensionDefinition)) == 5
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(DimensionDefinition)
+                .where(DimensionDefinition.code.in_(source_codes))
+            )
+            == 5
+        )
     async with session_factory() as session:
         session.add_all(
             [
@@ -268,7 +276,12 @@ async def test_founded_year_dimension_defaults_to_display_only(
 ) -> None:
     """品牌成立年份维度默认不影响推荐。by AI.Coding"""
     session_factory, _, _ = migrated_database
-    async with session_factory() as session, session.begin():
+    async with session_factory() as session:
+        seeded = await session.scalar(
+            select(DimensionDefinition).where(DimensionDefinition.code == "brand_founded_year")
+        )
+        assert seeded is not None
+        assert seeded.affects_recommendation is False
         dimension = DimensionDefinition(
             code="brand_founded_year",
             name="成立年份",
@@ -278,8 +291,6 @@ async def test_founded_year_dimension_defaults_to_display_only(
             default_priority=0,
             min_sample_size=0,
         )
-        session.add(dimension)
-        await session.flush()
         assert dimension.affects_recommendation is False
 
 
@@ -293,13 +304,8 @@ async def test_founded_year_dimension_is_display_only_at_database_boundary(
         with pytest.raises(IntegrityError):
             await session.execute(
                 text(
-                    "INSERT INTO dimension_definitions "
-                    "(id, code, name, domain, source_type, value_type, config, default_priority, "
-                    "rankable, affects_recommendation, min_sample_size, "
-                    "missing_data_policy, visualization, user_removable, enabled, created_at, "
-                    "updated_at) VALUES (gen_random_uuid(), 'brand_founded_year', '成立年份', "
-                    "'brand_background', 'brand_fact', 'integer', '{}'::jsonb, 0, true, true, 0, "
-                    "'show_unknown', 'text', true, true, now(), now())"
+                    "UPDATE dimension_definitions SET affects_recommendation = true "
+                    "WHERE code = 'brand_founded_year'"
                 )
             )
         await session.rollback()

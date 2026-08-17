@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Sequence
 from enum import StrEnum
 
 from app.core.errors import DomainConflictError, InputError
@@ -99,3 +100,13 @@ def validate_task_dimension_position(*, selected: bool, position: int | None) ->
     if position is not None and position < 0:
         raise InputError("维度排序位置不能为负数")
     return position
+
+
+def validate_dimension_confirmation(codes: Sequence[str]) -> tuple[str, ...]:
+    """规范化并校验维度确认列表非空且不重复。by AI.Coding"""
+    if not codes:
+        raise InputError("至少保留一个对比维度")
+    normalized = tuple(normalize_dimension_code(code) for code in codes)
+    if len(normalized) != len(set(normalized)):
+        raise InputError("确认维度中存在重复项")
+    return normalized

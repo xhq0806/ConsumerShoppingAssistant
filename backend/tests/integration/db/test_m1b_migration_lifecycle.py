@@ -15,9 +15,8 @@ pytestmark = pytest.mark.integration
 def test_m1b_upgrade_current_check_downgrade_and_reupgrade() -> None:
     """验证 0005 可升级、无 drift、可回退并重新升级。by AI.Coding"""
     with migrated_postgres("0001") as database:
-        # 从 M1-A 空基线完整走到 head，并用 Alembic check 审核 ORM metadata。
-        command.upgrade(database.alembic_config, "head")
-        command.check(database.alembic_config)
+        # M1-B 历史门禁固定验证 0005，不随后续纯数据迁移 head 漂移。
+        command.upgrade(database.alembic_config, "0005")
         engine = create_engine(database.sync_url)
         try:
             with engine.connect() as connection:
@@ -27,5 +26,7 @@ def test_m1b_upgrade_current_check_downgrade_and_reupgrade() -> None:
             engine.dispose()
         # 回退 M1-B 再重升，保证部署回滚和再次发布链路均可运行。
         command.downgrade(database.alembic_config, "0004")
+        command.upgrade(database.alembic_config, "0005")
+        # Alembic check 只能针对当前 head；继续升级纯数据迁移后审核 ORM drift。
         command.upgrade(database.alembic_config, "head")
         command.check(database.alembic_config)

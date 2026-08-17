@@ -12,7 +12,10 @@ from app.api.schemas.comparisons import (
     ComparisonDetailResponse,
     ComparisonProductResponse,
     ComparisonSummaryResponse,
+    ConfirmDimensionsRequest,
     ConfirmProductsRequest,
+    DimensionRecommendationResponse,
+    DimensionSetResponse,
     ProductSkuResponse,
     ProductSnapshotResponse,
     TaskEventResponse,
@@ -22,8 +25,10 @@ from app.api.schemas.comparisons import (
 from app.application.comparisons import (
     ComparisonApplicationService,
     ComparisonView,
+    ConfirmDimensionsCommand,
     ConfirmProductsCommand,
     CreateComparisonCommand,
+    DimensionSetView,
     ProductConfirmation,
     ProductView,
     UpdatePreferencesCommand,
@@ -124,6 +129,51 @@ async def update_comparison_preferences(
     return _detail_response(await service.update_preferences(comparison_id, command))
 
 
+@router.post(
+    "/{comparison_id}/dimensions/recommendations",
+    response_model=DimensionSetResponse,
+    operation_id="generate_comparison_dimension_recommendations",
+)
+async def generate_comparison_dimension_recommendations(
+    comparison_id: UUID,
+    service: Annotated[ComparisonApplicationService, Depends(get_comparison_service)],
+) -> DimensionSetResponse:
+    """首次生成并持久化当前任务的动态维度候选。by AI.Coding"""
+    return _dimension_set_response(await service.generate_dimension_recommendations(comparison_id))
+
+
+@router.get(
+    "/{comparison_id}/dimensions",
+    response_model=DimensionSetResponse,
+    operation_id="get_comparison_dimensions",
+)
+async def get_comparison_dimensions(
+    comparison_id: UUID,
+    service: Annotated[ComparisonApplicationService, Depends(get_comparison_service)],
+) -> DimensionSetResponse:
+    """查询任务已生成的重点与其他可选维度。by AI.Coding"""
+    return _dimension_set_response(await service.get_dimensions(comparison_id))
+
+
+@router.post(
+    "/{comparison_id}/dimensions/confirm",
+    response_model=DimensionSetResponse,
+    operation_id="confirm_comparison_dimensions",
+)
+async def confirm_comparison_dimensions(
+    comparison_id: UUID,
+    request: ConfirmDimensionsRequest,
+    service: Annotated[ComparisonApplicationService, Depends(get_comparison_service)],
+) -> DimensionSetResponse:
+    """按用户当前顺序确认维度并推进到 queued 边界。by AI.Coding"""
+    return _dimension_set_response(
+        await service.confirm_dimensions(
+            comparison_id,
+            ConfirmDimensionsCommand(tuple(request.dimension_codes)),
+        )
+    )
+
+
 def _summary_response(view: ComparisonView) -> ComparisonSummaryResponse:
     """将应用摘要视图显式映射为创建端点响应。by AI.Coding"""
     # 共享候选 mapper 保证创建和详情端点不会意外暴露不同字段。
@@ -214,4 +264,31 @@ def _preferences_response(view: ComparisonView) -> UserPreferencesResponse | Non
         usage_scenarios=list(view.preferences.usage_scenarios),
         priority_concerns=list(view.preferences.priority_concerns),
         deal_breakers=list(view.preferences.deal_breakers),
+    )
+
+
+def _dimension_set_response(view: DimensionSetView) -> DimensionSetResponse:
+    """显式映射动态维度集合并排除目录原始 config。by AI.Coding"""
+    return DimensionSetResponse(
+        comparison_id=view.comparison_id,
+        status=view.status,
+        category=view.category,
+        generated=view.generated,
+        dimensions=[
+            DimensionRecommendationResponse(
+                code=item.code,
+                name=item.name,
+                source_type=item.source_type,
+                selected=item.selected,
+                position=item.position,
+                user_selected=item.user_selected,
+                reason=item.reason,
+                data_risk=item.data_risk,
+                has_difference=item.has_difference,
+                affects_recommendation=item.affects_recommendation,
+                user_removable=item.user_removable,
+                description=item.description,
+            )
+            for item in view.dimensions
+        ],
     )

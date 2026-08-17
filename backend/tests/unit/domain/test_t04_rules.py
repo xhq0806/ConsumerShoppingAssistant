@@ -15,6 +15,7 @@ from app.domain.brands import (
 from app.domain.dimensions import (
     DimensionSourceType,
     normalize_dimension_code,
+    validate_dimension_confirmation,
     validate_non_negative,
     validate_registered_dimension,
     validate_task_dimension_position,
@@ -133,3 +134,15 @@ def test_task_dimension_position_rejects_invalid_state(
     """任务维度排序与选中状态必须一致。by AI.Coding"""
     with pytest.raises(InputError):
         validate_task_dimension_position(selected=selected, position=position)
+
+
+def test_dimension_confirmation_requires_unique_non_empty_codes() -> None:
+    """维度确认拒绝空列表和规范化后重复 code。by AI.Coding"""
+    assert validate_dimension_confirmation([" Review-Quality ", "price"]) == (
+        "review_quality",
+        "price",
+    )
+    with pytest.raises(InputError, match="至少"):
+        validate_dimension_confirmation([])
+    with pytest.raises(InputError, match="重复"):
+        validate_dimension_confirmation(["review-quality", "review_quality"])

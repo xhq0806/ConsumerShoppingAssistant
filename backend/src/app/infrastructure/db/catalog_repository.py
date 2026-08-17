@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
-from sqlalchemy import or_, select
+import uuid
+
+from sqlalchemy import case, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.domain.brands import normalize_brand_name
 from app.domain.dimensions import normalize_dimension_code, validate_registered_dimension
-from app.infrastructure.db.models import BrandProfile, DimensionDefinition
+from app.infrastructure.db.models import (
+    BrandProfile,
+    DimensionDefinition,
+    TaskDimension,
+)
 
 
 class CatalogRepository:
@@ -66,6 +72,26 @@ class CatalogRepository:
             select(DimensionDefinition)
             .where(DimensionDefinition.enabled.is_(True), category_filter)
             .order_by(DimensionDefinition.default_priority.asc(), DimensionDefinition.code.asc())
+        )
+        return list(result)
+
+    def add_task_dimension(self, task_dimension: TaskDimension) -> None:
+        """把任务维度候选加入当前工作单元。by AI.Coding"""
+        self._session.add(task_dimension)
+
+    async def list_task_dimensions(self, comparison_id: uuid.UUID) -> list[TaskDimension]:
+        """按重点顺序和目录优先级加载任务全部候选维度。by AI.Coding"""
+        result = await self._session.scalars(
+            select(TaskDimension)
+            .where(TaskDimension.comparison_id == comparison_id)
+            .options(selectinload(TaskDimension.dimension))
+            .order_by(
+                case((TaskDimension.selected.is_(True), 0), else_=1),
+                TaskDimension.position.asc().nulls_last(),
+                DimensionDefinition.default_priority.asc(),
+                DimensionDefinition.code.asc(),
+            )
+            .join(TaskDimension.dimension)
         )
         return list(result)
 

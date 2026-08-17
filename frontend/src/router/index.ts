@@ -18,5 +18,10 @@ export default createRouter({
       name: 'comparison-preferences',
       component: () => import('@/views/comparisons/PreferencesView.vue'),
     },
+    {
+      path: '/comparisons/:id/dimensions',
+      name: 'comparison-dimensions',
+      component: () => import('@/views/comparisons/DimensionsView.vue'),
+    },
   ],
 })

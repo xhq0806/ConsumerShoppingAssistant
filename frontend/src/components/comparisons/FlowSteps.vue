@@ -1,14 +1,15 @@
 <script setup lang="ts">
-// M1-C 输入、确认和偏好阶段导航。by AI.Coding
+// M1-D 输入、商品确认、偏好和维度阶段导航。by AI.Coding
 
 defineProps<{
-  current: 0 | 1 | 2
+  current: 0 | 1 | 2 | 3
 }>()
 
 const items = [
   { title: '商品输入', description: '创建并解析候选' },
   { title: '商品确认', description: '核对事实与 SKU' },
   { title: '购买偏好', description: '预算、场景与关注点' },
+  { title: '对比维度', description: '调整重点与顺序' },
 ]
 </script>
 

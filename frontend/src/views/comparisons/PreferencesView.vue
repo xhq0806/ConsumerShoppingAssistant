@@ -6,8 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, Rule } from 'ant-design-vue/es/form'
 import {
   ArrowLeftOutlined,
-  CheckCircleOutlined,
-  SaveOutlined,
+  ArrowRightOutlined,
 } from '@ant-design/icons-vue'
 import AppHeader from '@/components/comparisons/AppHeader.vue'
 import FlowSteps from '@/components/comparisons/FlowSteps.vue'
@@ -18,7 +17,6 @@ const route = useRoute()
 const router = useRouter()
 const comparisonStore = useComparisonStore()
 const formRef = ref<FormInstance>()
-const saved = ref(false)
 const comparisonId = computed(() => String(route.params.id))
 const form = reactive<{
   review_window_days: 30 | 60
@@ -100,9 +98,8 @@ async function validateBudgetRange(): Promise<void> {
 }
 
 async function savePreferences(): Promise<void> {
-  /** 保存偏好并展示服务端规范化后的完成状态。by AI.Coding */
+  /** 保存偏好后进入动态维度确认页面。by AI.Coding */
   comparisonStore.clearError()
-  saved.value = false
   try {
     await formRef.value?.validate()
     await comparisonStore.savePreferences(comparisonId.value, {
@@ -113,7 +110,7 @@ async function savePreferences(): Promise<void> {
       priority_concerns: form.priority_concerns,
       deal_breakers: form.deal_breakers,
     })
-    saved.value = true
+    await router.push({ name: 'comparison-dimensions', params: { id: comparisonId.value } })
   } catch {
     // 表单展示校验错误；请求错误由 store 持有并展示。
   }
@@ -282,8 +279,8 @@ function toNumber(value: string | null): number | null {
               type="primary"
               @click="savePreferences"
             >
-              <SaveOutlined />
-              保存购买偏好
+              保存并选择对比维度
+              <ArrowRightOutlined />
             </a-button>
           </a-form>
         </a-spin>
@@ -305,13 +302,6 @@ function toNumber(value: string | null): number | null {
             </li>
           </ol>
 
-          <div v-if="saved" class="saved-state">
-            <CheckCircleOutlined />
-            <div>
-              <strong>偏好已保存</strong>
-              <span>刷新页面仍可恢复。下一阶段将生成动态对比维度。</span>
-            </div>
-          </div>
         </aside>
       </section>
     </main>
@@ -427,27 +417,6 @@ function toNumber(value: string | null): number | null {
 .preference-summary small {
   color: var(--positive);
   font-size: 11px;
-}
-
-.saved-state {
-  display: flex;
-  margin-top: 22px;
-  border: 1px solid rgb(40 111 81 / 24%);
-  background: rgb(40 111 81 / 7%);
-  padding: 14px;
-  color: var(--positive);
-  gap: 10px;
-}
-
-.saved-state div {
-  display: grid;
-  gap: 4px;
-}
-
-.saved-state span {
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.5;
 }
 
 @media (max-width: 860px) {

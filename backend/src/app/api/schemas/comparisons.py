@@ -50,6 +50,15 @@ class UpdatePreferencesRequest(_StrictSchema):
     deal_breakers: list[PreferenceText] = Field(default_factory=list)
 
 
+DimensionCode = Annotated[str, Field(min_length=1, max_length=100)]
+
+
+class ConfirmDimensionsRequest(_StrictSchema):
+    """定义最终确认的唯一有序维度 code 列表。by AI.Coding"""
+
+    dimension_codes: list[DimensionCode] = Field(min_length=1, max_length=20)
+
+
 class UserPreferencesResponse(_StrictSchema):
     """定义可恢复的规范化用户偏好响应。by AI.Coding"""
 
@@ -119,6 +128,33 @@ class ComparabilityWarningResponse(_StrictSchema):
 
     code: str
     message: str
+
+
+class DimensionRecommendationResponse(_StrictSchema):
+    """定义单个动态维度的安全展示和恢复字段。by AI.Coding"""
+
+    code: str
+    name: str
+    source_type: str
+    selected: bool
+    position: int | None
+    user_selected: bool
+    reason: str
+    data_risk: Literal["available", "partial", "unavailable"]
+    has_difference: bool
+    affects_recommendation: bool
+    user_removable: bool
+    description: str
+
+
+class DimensionSetResponse(_StrictSchema):
+    """定义任务动态维度集合响应。by AI.Coding"""
+
+    comparison_id: UUID
+    status: str
+    category: str | None
+    generated: bool
+    dimensions: list[DimensionRecommendationResponse]
 
 
 class ComparisonSummaryResponse(_StrictSchema):
