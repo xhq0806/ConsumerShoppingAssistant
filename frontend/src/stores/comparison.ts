@@ -9,6 +9,7 @@ import {
   generateComparisonDimensions,
   getComparison,
   getComparisonAnalysisProgress,
+  getComparisonReport,
   getComparisonDimensions,
   parseComparison,
   retryComparisonAnalysis,
@@ -16,6 +17,7 @@ import {
   updateComparisonPreferences,
   type AnalysisProgress,
   type ComparisonDetail,
+  type ComparisonReport,
   type ConfirmDimensionsPayload,
   type ConfirmProductsPayload,
   type CreateComparisonPayload,
@@ -38,12 +40,14 @@ type ComparisonAction =
   | 'starting-analysis'
   | 'loading-progress'
   | 'retrying-analysis'
+  | 'loading-report'
 
 export const useComparisonStore = defineStore('comparison', () => {
   /** 管理当前任务详情、请求状态和仅含任务 ID 的恢复提示。by AI.Coding */
   const comparison = ref<ComparisonDetail | null>(null)
   const dimensionSet = ref<DimensionSet | null>(null)
   const analysisProgress = ref<AnalysisProgress | null>(null)
+  const report = ref<ComparisonReport | null>(null)
   const action = ref<ComparisonAction | null>(null)
   const error = ref<ApiError | null>(null)
   const lastComparisonId = ref(localStorage.getItem(LAST_COMPARISON_KEY))
@@ -233,6 +237,22 @@ export const useComparisonStore = defineStore('comparison', () => {
     }
   }
 
+  async function loadReport(comparisonId: string): Promise<ComparisonReport> {
+    /** 从服务端恢复最新已发布报告。by AI.Coding */
+    error.value = null
+    action.value = 'loading-report'
+    try {
+      const loaded = await getComparisonReport(comparisonId)
+      report.value = loaded
+      return loaded
+    } catch (cause) {
+      error.value = normalizeError(cause)
+      throw error.value
+    } finally {
+      action.value = null
+    }
+  }
+
   function clearError(): void {
     /** 清除页面已展示的请求错误。by AI.Coding */
     error.value = null
@@ -248,6 +268,7 @@ export const useComparisonStore = defineStore('comparison', () => {
     comparison,
     dimensionSet,
     analysisProgress,
+    report,
     action,
     error,
     busy,
@@ -262,6 +283,7 @@ export const useComparisonStore = defineStore('comparison', () => {
     startAnalysis,
     loadAnalysisProgress,
     retryAnalysis,
+    loadReport,
     clearError,
   }
 })

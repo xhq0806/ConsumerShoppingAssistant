@@ -9,6 +9,7 @@ from typing import Literal, Protocol
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
+from app.application.report_generation import ReportApplicationService
 from app.application.review_analysis import (
     ReviewAnnotationAnalyzer,
     ReviewAnnotationInvocation,
@@ -156,6 +157,7 @@ class AnalysisApplicationService:
         *,
         dispatcher: AnalysisTaskDispatcher | None,
         annotation_analyzer: ReviewAnnotationAnalyzer | None = None,
+        report_service: ReportApplicationService | None = None,
         max_reviews_per_product: int = 500,
         annotation_batch_size: int = 20,
     ) -> None:
@@ -166,6 +168,7 @@ class AnalysisApplicationService:
         self._commerce_provider = commerce_provider
         self._dispatcher = dispatcher
         self._annotation_analyzer = annotation_analyzer
+        self._report_service = report_service
         self._max_reviews_per_product = max_reviews_per_product
         self._annotation_batch_size = annotation_batch_size
 
@@ -174,7 +177,7 @@ class AnalysisApplicationService:
         async with self._uow_factory() as uow:
             task = await self._required_task(self._comparison_repository(uow), comparison_id)
             if task.status is ComparisonStatus.QUEUED or (
-                task.status is ComparisonStatus.PROCESSING and task.progress < 75
+                task.status is ComparisonStatus.PROCESSING and task.progress < 100
             ):
                 should_dispatch = True
             elif task.status in {
@@ -200,9 +203,7 @@ class AnalysisApplicationService:
             if not self._can_retry(task):
                 raise DomainConflictError("当前分析失败不可重试")
             repository.transition(task, ComparisonStatus.QUEUED)
-            task.progress = (
-                max(45, min(task.progress, 69)) if self._has_annotation_checkpoint(task) else 0
-            )
+            task.progress = self._retry_progress(task)
             task.error_code = None
             task.error_message = None
             repository.add_event(
@@ -247,10 +248,7 @@ class AnalysisApplicationService:
                 annotation_count=annotation_count,
                 metric_count=metric_count,
                 can_retry=self._can_retry(task),
-                polling_complete=(
-                    task.status in _POLLING_COMPLETE_STATUSES
-                    or (task.status is ComparisonStatus.PROCESSING and task.progress >= 75)
-                ),
+                polling_complete=task.status in _POLLING_COMPLETE_STATUSES,
             )
 
     async def process_comparison(self, comparison_id: UUID) -> AnalysisExecutionResult:
@@ -287,15 +285,28 @@ class AnalysisApplicationService:
             persisted = await self._persist_batches(comparison_id, batches)
             if not persisted:
                 return await self._execution_from_progress(comparison_id, outcome="ignored")
-        return await self._process_annotations_and_metrics(comparison_id)
+        progress = await self.get_analysis_progress(comparison_id)
+        if progress.status == ComparisonStatus.PROCESSING.value and progress.progress < 75:
+            result = await self._process_annotations_and_metrics(comparison_id)
+            if result.status != ComparisonStatus.PROCESSING.value:
+                return result
+        if self._report_service is None:
+            return await self._execution_from_progress(comparison_id, outcome="processed")
+        report_result = await self._report_service.generate_report(comparison_id)
+        return await self._execution_from_progress(
+            comparison_id,
+            outcome=report_result.outcome,
+        )
 
     async def _claim_work(self, comparison_id: UUID) -> _AnalysisWorkClaim:
         """通过任务根行锁决定获取评论、恢复注解或忽略重复消息。by AI.Coding"""
         async with self._uow_factory() as uow:
             repository = self._comparison_repository(uow)
             task = await self._required_task(repository, comparison_id, for_update=True)
-            if task.status is ComparisonStatus.PROCESSING and task.progress < 75:
-                return _AnalysisWorkClaim("resume", (), task.review_window_days)
+            if task.status is ComparisonStatus.PROCESSING:
+                if task.progress < 75 or (self._report_service is not None and task.progress < 100):
+                    return _AnalysisWorkClaim("resume", (), task.review_window_days)
+                return _AnalysisWorkClaim("ignored", (), task.review_window_days)
             if task.status is not ComparisonStatus.QUEUED:
                 return _AnalysisWorkClaim("ignored", (), task.review_window_days)
             review_count = await self._analysis_repository(uow).count_reviews_for_comparison(
@@ -305,7 +316,7 @@ class AnalysisApplicationService:
             if review_count > 0:
                 # retry 先经过 queued/fetching 合法状态，再立即恢复到已有评论的 processing。
                 repository.transition(task, ComparisonStatus.PROCESSING)
-                task.progress = max(45, min(task.progress, 69))
+                task.progress = self._resume_progress(task)
                 repository.add_event(
                     comparison_id=task.id,
                     stage=TaskStage.ANALYSIS,
@@ -751,6 +762,42 @@ class AnalysisApplicationService:
         )
 
     @staticmethod
+    def _has_report_checkpoint(task: ComparisonTask) -> bool:
+        """判断任务是否已经进入 M1-G 报告阶段。by AI.Coding"""
+        partial = task.partial_result
+        return (
+            isinstance(partial, dict)
+            and partial.get("schema_version") == 1
+            and partial.get("phase") in {"reporting", "report_ready"}
+        )
+
+    @classmethod
+    def _retry_progress(cls, task: ComparisonTask) -> int:
+        """根据持久化断点决定 failed→queued 时保留的阶段进度。by AI.Coding"""
+        if cls._has_report_checkpoint(task):
+            return max(80, min(task.progress, 99))
+        if cls._has_annotation_checkpoint(task):
+            if (
+                isinstance(task.partial_result, dict)
+                and task.partial_result.get("phase") == "metrics_ready"
+            ):
+                return 75
+            return max(45, min(task.progress, 69))
+        return 0
+
+    @classmethod
+    def _resume_progress(cls, task: ComparisonTask) -> int:
+        """把 queued 重试任务恢复到注解、指标或报告断点。by AI.Coding"""
+        if cls._has_report_checkpoint(task):
+            return max(80, min(task.progress, 99))
+        if (
+            isinstance(task.partial_result, dict)
+            and task.partial_result.get("phase") == "metrics_ready"
+        ):
+            return 75
+        return max(45, min(task.progress, 69))
+
+    @staticmethod
     def _annotation_progress(processed_count: int, total_count: int) -> int:
         """把评论批次完成比例映射到 46..69 的稳定进度区间。by AI.Coding"""
         if total_count <= 0:
@@ -823,6 +870,8 @@ class AnalysisApplicationService:
         """把持久化状态和进度映射为稳定阶段与用户可见文案。by AI.Coding"""
         status = task.status
         if status is ComparisonStatus.PROCESSING:
+            if task.progress >= 80:
+                return ("generating_report", "正在生成可追溯的购买决策报告。")
             if task.progress >= 75:
                 return (
                     "metrics_ready",
@@ -832,16 +881,18 @@ class AnalysisApplicationService:
                 return ("calculating_metrics", "正在计算确定性评论指标。")
             return ("annotating_reviews", "正在对近期评论执行维度与情感注解。")
         if status is ComparisonStatus.FAILED:
+            if AnalysisApplicationService._has_report_checkpoint(task):
+                return ("failed", "购买决策报告生成失败。")
             if task.error_code and task.error_code.startswith("LLM_"):
                 return ("failed", "评论智能注解失败。")
             return ("failed", "评论采集失败。")
         return {
             ComparisonStatus.QUEUED: ("queued", "任务已排队，等待评论采集。"),
             ComparisonStatus.FETCHING: ("fetching_reviews", "正在获取并清洗近期评论。"),
-            ComparisonStatus.COMPLETED: ("completed", "任务已完成。"),
+            ComparisonStatus.COMPLETED: ("completed", "购买决策报告已生成。"),
             ComparisonStatus.PARTIALLY_COMPLETED: (
                 "partially_completed",
-                "任务已生成部分结果。",
+                "部分数据不足，已生成可追溯的降级报告。",
             ),
         }.get(status, ("not_ready", "任务尚未进入分析阶段。"))
 

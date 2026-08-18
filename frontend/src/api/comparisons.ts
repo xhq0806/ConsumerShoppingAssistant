@@ -114,6 +114,101 @@ export interface AnalysisProgress {
   polling_complete: boolean
 }
 
+export type ReportClaimType =
+  | 'fact'
+  | 'advantage'
+  | 'disadvantage'
+  | 'recommendation'
+  | 'warning'
+
+export interface ReportSourceRef {
+  type: 'product_snapshot' | 'brand_source' | 'analysis_metric' | 'raw_review'
+  id: string
+  field?: string
+  evidence?: string
+}
+
+export interface ReportClaim {
+  id: string
+  claim_type: ReportClaimType
+  text: string
+  source_refs: ReportSourceRef[]
+  confidence: number | null
+  display_order: number
+}
+
+export interface ReportScenarioRecommendation {
+  scenario: string
+  product_id: string | null
+  claim_index: number
+}
+
+export interface ReportSummary {
+  headline: string
+  recommended_product_id: string | null
+  recommendation_claim_index: number
+  scenario_recommendations: ReportScenarioRecommendation[]
+  key_reason_claim_indexes: number[]
+  risk_claim_indexes: number[]
+  confidence: number
+}
+
+export interface ReportDifference {
+  dimension_code: string
+  dimension_name: string
+  claim_index: number
+}
+
+export interface ReportMetric {
+  id: string
+  dimension_code: string
+  metric_type: string
+  numeric_value: string | null
+  sample_size: number
+  confidence: number | null
+}
+
+export interface ReportProduct {
+  id: string
+  title: string
+  category: string | null
+  brand: string | null
+  shop_name: string | null
+  price: string | null
+  currency: string
+  specifications: Record<string, string>
+  after_sales: string[]
+  review_count: number
+  metrics: ReportMetric[]
+}
+
+export interface ReportDimension {
+  id: string
+  code: string
+  name: string
+  min_sample_size: number
+}
+
+export interface ReportFullComparison {
+  products: ReportProduct[]
+  dimensions: ReportDimension[]
+  task_metrics: ReportMetric[]
+  evidence_count: number
+}
+
+export interface ComparisonReport {
+  id: string
+  comparison_id: string
+  version: number
+  status: 'completed' | 'partial'
+  summary: ReportSummary
+  differences: ReportDifference[]
+  full_comparison: ReportFullComparison
+  warnings: string[]
+  generated_at: string
+  claims: ReportClaim[]
+}
+
 export interface CreateComparisonPayload {
   product_urls: string[]
   review_window_days: 30 | 60
@@ -230,4 +325,9 @@ export function getComparisonAnalysisProgress(
   return requestJson<AnalysisProgress>(
     `${COMPARISON_API}/${comparisonId}/analysis/progress`,
   )
+}
+
+export function getComparisonReport(comparisonId: string): Promise<ComparisonReport> {
+  /** 查询任务最新已发布的完整或降级报告。by AI.Coding */
+  return requestJson<ComparisonReport>(`${COMPARISON_API}/${comparisonId}/report`)
 }

@@ -5,13 +5,18 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, status
 
-from app.api.dependencies import get_analysis_service, get_comparison_service
+from app.api.dependencies import (
+    get_analysis_service,
+    get_comparison_service,
+    get_report_service,
+)
 from app.api.schemas.comparisons import (
     AnalysisProgressResponse,
     ComparabilityWarningResponse,
     ComparisonCreateRequest,
     ComparisonDetailResponse,
     ComparisonProductResponse,
+    ComparisonReportResponse,
     ComparisonSummaryResponse,
     ConfirmDimensionsRequest,
     ConfirmProductsRequest,
@@ -19,6 +24,7 @@ from app.api.schemas.comparisons import (
     DimensionSetResponse,
     ProductSkuResponse,
     ProductSnapshotResponse,
+    ReportClaimResponse,
     TaskEventResponse,
     UpdatePreferencesRequest,
     UserPreferencesResponse,
@@ -34,6 +40,10 @@ from app.application.comparisons import (
     ProductConfirmation,
     ProductView,
     UpdatePreferencesCommand,
+)
+from app.application.report_generation import (
+    ComparisonReportView,
+    ReportApplicationService,
 )
 
 router = APIRouter(prefix="/api/v1/comparisons", tags=["comparisons"])
@@ -215,6 +225,19 @@ async def get_comparison_analysis_progress(
     return _analysis_progress_response(await service.get_analysis_progress(comparison_id))
 
 
+@router.get(
+    "/{comparison_id}/report",
+    response_model=ComparisonReportResponse,
+    operation_id="get_comparison_report",
+)
+async def get_comparison_report(
+    comparison_id: UUID,
+    service: Annotated[ReportApplicationService, Depends(get_report_service)],
+) -> ComparisonReportResponse:
+    """查询任务最新已发布的完整或降级报告。by AI.Coding"""
+    return _report_response(await service.get_latest_report(comparison_id))
+
+
 def _summary_response(view: ComparisonView) -> ComparisonSummaryResponse:
     """将应用摘要视图显式映射为创建端点响应。by AI.Coding"""
     # 共享候选 mapper 保证创建和详情端点不会意外暴露不同字段。
@@ -350,4 +373,30 @@ def _analysis_progress_response(view: AnalysisProgressView) -> AnalysisProgressR
         metric_count=view.metric_count,
         can_retry=view.can_retry,
         polling_complete=view.polling_complete,
+    )
+
+
+def _report_response(view: ComparisonReportView) -> ComparisonReportResponse:
+    """显式映射报告块与来源 claim 白名单。by AI.Coding"""
+    return ComparisonReportResponse(
+        id=view.id,
+        comparison_id=view.comparison_id,
+        version=view.version,
+        status=view.status,
+        summary=view.summary,
+        differences=list(view.differences),
+        full_comparison=view.full_comparison,
+        warnings=list(view.warnings),
+        generated_at=view.generated_at,
+        claims=[
+            ReportClaimResponse(
+                id=claim.id,
+                claim_type=claim.claim_type,
+                text=claim.text,
+                source_refs=list(claim.source_refs),
+                confidence=claim.confidence,
+                display_order=claim.display_order,
+            )
+            for claim in view.claims
+        ],
     )

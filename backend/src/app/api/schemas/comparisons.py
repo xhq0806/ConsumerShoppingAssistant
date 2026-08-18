@@ -174,6 +174,32 @@ class AnalysisProgressResponse(_StrictSchema):
     polling_complete: bool
 
 
+class ReportClaimResponse(_StrictSchema):
+    """定义带受控来源的报告结论响应。by AI.Coding"""
+
+    id: UUID
+    claim_type: str
+    text: str
+    source_refs: list[dict[str, str]]
+    confidence: float | None
+    display_order: int
+
+
+class ComparisonReportResponse(_StrictSchema):
+    """定义最新已发布报告的白名单响应。by AI.Coding"""
+
+    id: UUID
+    comparison_id: UUID
+    version: int
+    status: str
+    summary: dict[str, object]
+    differences: list[dict[str, object]]
+    full_comparison: dict[str, object]
+    warnings: list[str]
+    generated_at: datetime
+    claims: list[ReportClaimResponse]
+
+
 class ComparisonSummaryResponse(_StrictSchema):
     """定义创建或幂等重放时返回的任务摘要。by AI.Coding"""
 

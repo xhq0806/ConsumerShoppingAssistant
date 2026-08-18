@@ -1,7 +1,7 @@
 # Consumer Shopping Assistant — 系统行为规格
 
 > 最后更新：2026-08-17
-> 当前版本：v0.7.0-m1f
+> 当前版本：v0.8.0-m1g
 > 维护方式：仅记录已经实现并经过验证的系统行为；计划能力不得提前写入本文件
 > M0 验收：`docs/m0-verification.md`（PASS_WITH_CONCERNS）
 > M1-A 验收：`docs/m1a-verification.md`（PASS_WITH_CONCERNS）
@@ -10,8 +10,9 @@
 > M1-D 验收：`docs/m1d-verification.md`（PASS）
 > M1-E 验收：`docs/m1e-verification.md`（PASS）
 > M1-F 验收：`docs/m1f-verification.md`（PASS）
+> M1-G 验收：`docs/m1g-verification.md`（PASS）
 > 验收方式：个人项目以可复现的本地完整质量门禁作为交付证据，不要求远端 CI 成功记录
-> 验收证据：M0 见 `docs/m0-verification.md`；M1-A 见 `docs/m1a-verification.md`；M1-B 见 `docs/m1b-verification.md`；M1-C 见 `docs/m1c-verification.md`；M1-D 见 `docs/m1d-verification.md`；M1-E 见 `docs/m1e-verification.md`；M1-F 见 `docs/m1f-verification.md`
+> 验收证据：M0 见 `docs/m0-verification.md`；M1-A 见 `docs/m1a-verification.md`；M1-B 见 `docs/m1b-verification.md`；M1-C 见 `docs/m1c-verification.md`；M1-D 见 `docs/m1d-verification.md`；M1-E 见 `docs/m1e-verification.md`；M1-F 见 `docs/m1f-verification.md`；M1-G 见 `docs/m1g-verification.md`
 
 ## 1. 功能清单
 
@@ -34,6 +35,8 @@
 | DeepSeek Chat Completions 配置与 Adapter | v0.6.1-deepseek-config | ✅ 已实现 | 2026-08-17 | `docs/specs/deepseek-llm-adapter.md` |
 | 评论智能注解、证据校验与断点恢复 | v0.7.0-m1f | ✅ 已实现 | 2026-08-17 | `docs/specs/m1f-review-annotation-metrics.md` |
 | 商品级与任务级确定性评论指标 | v0.7.0-m1f | ✅ 已实现 | 2026-08-17 | `docs/specs/m1f-review-annotation-metrics.md` |
+| 结构化购买报告、claim 来源与任务终态 | v0.8.0-m1g | ✅ 已实现 | 2026-08-18 | `docs/specs/m1g-report-completion.md` |
+| 确定性 partial fallback 与报告查询页面 | v0.8.0-m1g | ✅ 已实现 | 2026-08-18 | `docs/specs/m1g-report-completion.md` |
 | 淘宝商品 URL 安全 | v0.1.0-m0 | ✅ 已实现 | 2026-08-05 | `docs/specs/m0-engineering-foundation.md` |
 | Commerce Provider 与 Fixture | v0.1.0-m0 | ✅ 已实现 | 2026-08-05 | `docs/specs/m0-engineering-foundation.md` |
 | 供应商中立 LLM Gateway | v0.1.0-m0 | ✅ 已实现 | 2026-08-05 | `docs/specs/m0-engineering-foundation.md` |
@@ -42,16 +45,16 @@
 
 ## 2. 系统定位与当前边界
 
-当前系统是购物决策助手的 M1-F 本地开发基线，不是完整购物比较产品。系统已经具备完整五步本地闭环：输入 2～3 个候选商品、使用 Fixture Provider 解析商品、确认 SKU、保存购买偏好、生成和调整动态维度、投递 Celery 任务、获取和清洗近 30/60 天 Fixture 评论，并通过 Fake/DeepSeek analysis profile 生成受控维度情感注解和确定性指标。成功任务停在 `processing/75`，表示评论注解与指标已准备，等待报告生成。
+当前系统是购物决策助手的 M1-G 本地开发基线，不是完整购物比较产品。系统已经具备完整六步本地闭环：输入 2～3 个候选商品、使用 Fixture Provider 解析商品、确认 SKU、保存购买偏好、生成和调整动态维度、投递 Celery 任务、获取和清洗近 30/60 天 Fixture 评论、生成受控维度注解和确定性指标，并发布带来源 claim 的完整或降级购买报告。成功任务进入 `completed/100` 或 `partially_completed/100`。
 
 当前迁移链为 `0001 -> 0002 -> 0003 -> 0004 -> 0005 -> 0006`，PostgreSQL 仍包含 16 张业务表；`0005` 增加创建幂等约束，`0006` 写入 16 个受控通用/手机维度种子且不修改 Schema。以下行为仍未实现：
 
 - 品牌资料采集和运行时维度管理端；
-- LangGraph 工作流、报告编排、实时推送和保留期清理；
-- 报告生成、图表、报告追问业务和管理端；
+- LangGraph 工作流、实时推送和保留期清理；
+- 报告追问、重新生成、多版本切换、导出和管理端；
 - 用户身份、任务归属、多租户权限和匿名访问凭证；
 - 真实淘宝生产数据 Provider；
-- 将 DeepSeek report profile 接入报告生成。
+- 交互图表和报告反馈。
 
 上述能力必须通过后续里程碑实现并验收后，才能合并到本文件。
 
@@ -66,8 +69,8 @@ Docker Compose 当前定义六个目标服务：
 | `postgres` | 使用 PostgreSQL 16，保存 Alembic 迁移状态并参与 readiness 检查；`0006` head 定义 16 张业务表、M1-B 创建幂等约束和 M1-D 受控维度种子；Comparison API 通过短事务写入任务、候选、快照、SKU、任务维度和事件；容器内不暴露宿主端口 |
 | `redis` | 使用 Redis 7；Celery 配置将其不同 DB 用作 broker/result backend，并参与 readiness 检查；容器内不暴露宿主端口 |
 | `migrate` | 一次性执行 `alembic upgrade head`；只有成功退出后 API 和 Worker 才启动 |
-| `api` | 使用 Python 3.12 运行 FastAPI/Uvicorn，提供 M1-F Comparison、偏好、动态维度和分析进度 API，开发环境暴露宿主端口 8000 |
-| `worker` | 与 API 共享后端代码和镜像，运行 Celery Worker，消费 `app.workers.process_comparison`；不暴露 HTTP 端口 |
+| `api` | 使用 Python 3.12 运行 FastAPI/Uvicorn，提供 M1-G Comparison、偏好、维度、分析进度和报告查询 API，开发环境暴露宿主端口 8000 |
+| `worker` | 与 API 共享后端代码和镜像，运行 Celery Worker，消费 `app.workers.process_comparison`，执行评论分析与报告发布；不暴露 HTTP 端口 |
 | `web` | 构建 Vue 3 SPA，通过 Nginx 暴露宿主端口 5173，并代理 `/api` 与支持 history fallback |
 
 Compose 项目名固定为：
@@ -92,11 +95,11 @@ docker compose -f docker/docker-compose.yml <command>
 ### 3.2 模块边界
 
 - API 和 Worker 共享 `backend/src/app` 中的配置、错误、数据库、领域规则和 Provider 契约。
-- API 负责健康检查、统一错误以及 M1-F 对比草稿、解析、商品确认、偏好、维度、分析启动、重试和进度请求；Worker 执行 Fixture 评论获取、确定性清洗、LLM 注解、断点提交和指标重建。
+- API 负责健康检查、统一错误以及 M1-G 对比草稿、解析、商品确认、偏好、维度、分析启动、进度和报告查询；Worker 执行 Fixture 评论获取、清洗、LLM 注解、指标重建、report 调用与报告发布。
 - `app.domain` 定义任务状态、商品、品牌、维度、评论、指标、报告 claim 和模型运行的纯领域校验；不依赖 API、Celery、LangGraph 或供应商 SDK。
 - `app.infrastructure.db.models` 定义 16 张业务表；按 comparison、catalog、analysis、report、model run 划分的 Repository 负责查询和持久化，但不自行提交事务。
 - PostgreSQL 是业务持久化真源；Redis 不得成为任务、指标或报告的唯一持久状态。
-- Web 提供商品输入、商品/SKU 确认、购买偏好、动态维度和任务进度五步流程；任务恢复以路由 ID 和服务端详情为真源。
+- Web 提供商品输入、商品/SKU 确认、购买偏好、动态维度、任务进度和对比报告六步流程；任务恢复以路由 ID 和服务端详情为真源。
 
 ### 3.3 默认适配器
 
@@ -377,7 +380,8 @@ DeepSeek 提供两个配置 profile：
 
 M1-F 评论注解通过供应商中立 Gateway 选择 analysis profile：默认 Fake 使用确定性 alias/评分
 输出，配置 DeepSeek 时使用 V4 Flash、关闭思考并执行 JSON/Pydantic 与应用语义双层校验。
-report profile 仍未接入，留给后续报告用例。
+M1-G 报告调用选择 V4 Pro、thinking enabled、high effort、120 秒单次超时和 0 次重试；
+受控模型错误会记录失败审计并由确定性 partial 基础报告接管。
 
 ## 10. 前端基线
 
@@ -395,6 +399,9 @@ report profile 仍未接入，留给后续报告用例。
 /                                      商品链接输入、任务创建和 Fixture 解析
 /comparisons/:id/confirm               商品事实与 SKU 确认
 /comparisons/:id/preferences           评论窗口与购买偏好
+/comparisons/:id/dimensions            动态维度确认
+/comparisons/:id/progress              评论分析与报告进度
+/comparisons/:id/report                购买建议、差异与证据报告
 ```
 
 - 页面通过统一 `src/api/request.ts` 解析 JSON、超时和 ProblemDetails。
@@ -416,7 +423,7 @@ report profile 仍未接入，留给后续报告用例。
 - Testcontainers PostgreSQL 集成测试；
 - Alembic upgrade/current/check。
 
-当前本地完整验收为 187 项后端测试全部通过；Ruff、format 和 mypy 同时通过，Alembic
+当前本地完整验收为 195 项后端测试全部通过；Ruff、format 和 mypy 同时通过，Alembic
 head 保持 `0006` 且无 metadata drift。
 
 ### 11.2 前端
@@ -427,10 +434,10 @@ head 保持 `0006` 且无 metadata drift。
 - Vitest；
 - Vite production build。
 
-M1-F 前端 typecheck、3 个 Vitest 文件共 13 项测试和 production build 全部通过。业务页面已
+M1-G 前端 typecheck、3 个 Vitest 文件共 15 项测试和 production build 全部通过。业务页面已
 采用路由懒加载；Ant Design Vue 全局导入仍使主 chunk 约 1.53 MB，属于非阻断构建警告。
-浏览器已验证桌面端和 `390x844` 移动端完整五步流程、真实 Celery/DeepSeek Worker、评论
-注解与指标计数、刷新恢复和无横向溢出。
+浏览器已验证桌面端和 `390x844` 移动端完整六步流程、真实 Celery/DeepSeek 调用、partial
+fallback、报告刷新恢复和无横向溢出。
 
 ### 11.3 本地交付与 CI 配置
 
@@ -441,7 +448,7 @@ M1-F 前端 typecheck、3 个 Vitest 文件共 13 项测试和 production build 
 - Node.js 22 前端检查、测试和构建；
 - Docker Compose 配置校验。
 
-该仓库当前按个人项目维护，不要求 GitHub Actions 远端运行作为验收前提。本地 Ruff、format、mypy、Pytest、Testcontainers PostgreSQL、Alembic、前端 typecheck/test/build、Compose 和浏览器验收是当前交付门禁。M1-F 的执行环境、命令和结果见 `docs/m1f-verification.md`。
+该仓库当前按个人项目维护，不要求 GitHub Actions 远端运行作为验收前提。本地 Ruff、format、mypy、Pytest、Testcontainers PostgreSQL、Alembic、前端 typecheck/test/build、Compose 和浏览器验收是当前交付门禁。M1-G 的执行环境、命令和结果见 `docs/m1g-verification.md`。
 
 ## 12. 淘宝生产接入门禁
 
@@ -500,6 +507,14 @@ Fixture 模式可以继续用于 M1/M2 内部开发和自动化测试。
 35. M1-F timeout、rate limit、provider unavailable 和 invalid structured output 可从断点 retry。
 36. M1-F 所有统计指标由 Python 根据持久化评论和注解计算，LLM 不得成为数字真源。
 37. M1-F processing/75 表示评论注解与指标已准备，不表示报告或购买建议完成。
+38. M1-G report Prompt 只能使用当前任务商品事实、规范化偏好、选中维度、指标和已验证证据。
+39. M1-G 每条报告 claim 必须绑定至少一个当前 comparison 内存在且一致的来源。
+40. M1-G 模型不得生成或修改价格、统计值、商品 ID、维度 code 或来源 ID。
+41. M1-G full comparison、数据警告和 partial/completed 判定必须由 Python 决定。
+42. M1-G report profile 单次最多等待 120 秒且不自动重试。
+43. M1-G 受控 report 模型失败必须保存错误审计，并生成确定性 partial 基础报告。
+44. M1-G 已发布任务必须进入 completed/100 或 partially_completed/100。
+45. M1-G 首版固定 version=1；重复 Worker 不得创建重复报告或 claim。
 
 ## 14. M1-A 领域与 Repository 边界
 
@@ -526,7 +541,7 @@ Fixture 模式可以继续用于 M1/M2 内部开发和自动化测试。
 - JSON、事件、评论、来源和模型审计字段不得保存 Cookie、Authorization、API Key、用户登录态、完整 Prompt、完整模型响应或未经白名单过滤的 Provider payload。
 - 外部商品、评论和模型文本始终是不可信数据，持久化不赋予其指令或工具调用权限。
 - M1-A 没有新增业务 API、Celery 业务编排、LangGraph 工作流、分析算法、业务前端、真实淘宝 Provider 或真实 LLM 适配器；16 张表和 Repository 的存在不表示这些端到端能力已经实现。
-- M1-F 已在上述基线之上提供商品输入、确认、偏好、动态维度、评论采集、智能注解、指标计算和进度页面，但仍未实现报告或生产外部 Provider。
+- M1-G 已在上述基线之上提供商品输入、确认、偏好、动态维度、评论采集、智能注解、指标、报告和任务终态，但仍未实现报告追问或生产外部 Provider。
 
 ## 15. M1-B 对比草稿与商品确认
 
@@ -654,7 +669,7 @@ POST /api/v1/comparisons/{comparison_id}/dimensions/confirm
 - 零维度时确认按钮禁用；queued 后返回、搜索、增删和排序控件全部锁定。
 - 页面明确 queued 仅是分析边界，当前未启动 Celery/LangGraph Worker。
 - M1-D 本身不实现评论获取；M1-E 已在其 queued 边界后提供评论采集和任务进度页。
-- 当前仍不实现品牌采集、报告、鉴权或真实 Provider。
+- 当前仍不实现品牌采集、报告追问、鉴权或真实 Provider。
 
 ## 18. M1-E 异步评论采集与任务进度闭环
 
@@ -662,8 +677,8 @@ POST /api/v1/comparisons/{comparison_id}/dimensions/confirm
 
 - Compose 提供一次性 `migrate` 服务执行 `alembic upgrade head`。
 - API 和 Worker 依赖 `migrate: service_completed_successfully`，迁移失败时不得启动。
-- `POST /analysis/start` 对 queued 或 processing<75 的任务调用 Celery 调度器；fetching、
-  processing/75 和已完成状态幂等返回当前进度。
+- `POST /analysis/start` 对 queued 或 processing<100 的任务调用 Celery 调度器；fetching
+  和已完成状态幂等返回当前进度。
 - 数据库 queued 状态先于消息投递提交；broker 失败时 queued 仍可通过后续请求恢复。
 - 重复 Celery 消息通过任务根行锁抢占，只有第一个消息可以执行 queued→fetching。
 
@@ -703,7 +718,7 @@ GET  /api/v1/comparisons/{comparison_id}/analysis/progress
   注解总数、指标数、can_retry 和 polling_complete。
 - `/comparisons/:id/progress` 进入时恢复 Comparison 和分析进度；queued 时自动 start。
 - 页面每秒轮询；初次请求或轮询临时失败后继续重试。
-- processing/75、failed、completed 或 partially_completed 时停止轮询。
+- failed、completed 或 partially_completed 时停止轮询；processing/75 继续进入报告阶段。
 - M1-E 自身只实现任务排队、评论获取和评论清洗；M1-F 在同一页面补充智能注解、指标计算
   和报告待生成阶段。
 - M1-E 不实现评论注解、指标、LangGraph、报告、真实淘宝评论或公网权限控制；其中评论注解
@@ -742,7 +757,7 @@ GET  /api/v1/comparisons/{comparison_id}/analysis/progress
 - 所有比例使用 Decimal 和八位小数；零注解作用域生成可复算零值。
 - 指标来源只包含受控 review/annotation UUID，不包含正文。
 - 写入时整体替换当前任务指标，重复执行结果稳定。
-- 完成后保持 `processing`、progress=75、stage=`metrics_ready`；M1-G 负责报告和终态。
+- M1-F 完成边界保持 `processing`、progress=75、stage=`metrics_ready`；M1-G 随后负责报告和终态。
 
 ### 19.4 Web 与真实验收
 
@@ -751,3 +766,52 @@ GET  /api/v1/comparisons/{comparison_id}/analysis/progress
 - 真实 DeepSeek analysis profile 已完成 Fixture 任务验收：3 条获取、2 条有效、1 条评论被
   注解、2 条维度注解、54 条指标，最终到达 processing/75。
 - M1-F 不实现报告生成、购买结论、图表、追问、鉴权或真实淘宝 Provider。
+
+## 20. M1-G 报告生成与任务完成闭环
+
+### 20.1 报告占位与模型输入
+
+- 同一 Celery task 在 M1-F 到达 processing/75 后继续执行报告阶段。
+- 首次行锁事务创建 version=1、status=generating 的报告占位并推进 progress=80。
+- 重复消息复用 generating/failed version=1；已发布报告直接忽略。
+- LLM 调用位于数据库写事务外，使用 report profile。
+- Prompt 只包含当前任务商品快照、规范化偏好、选中维度、精选确定性指标、已验证评论证据
+  和确定性数据警告。
+- report profile 配置为 V4 Pro、thinking enabled、high effort、120 秒超时、0 次重试。
+
+### 20.2 结构化报告与来源门禁
+
+- 模型输出 claims、summary 和 differences；summary/differences 只通过零基 claim index 引用
+  claims。
+- 模型只能使用当前任务 product ID、已选 dimension code 和输入 source ref。
+- 应用层拒绝任务外商品、未知场景/维度、越界或未引用 claim index、绝对化文案和目录外来源。
+- Repository 发布前再次查询 snapshot、metric 和 review 是否属于 report.comparison_id。
+- product snapshot 引用必须指向有值的真实列；raw review evidence 必须为正文连续子串。
+- 每条可发布 claim 至少绑定一个有效来源。
+
+### 20.3 确定性报告块与降级
+
+- Python 构造 full comparison，包含商品事实、规格、售后、有效评论数、选中维度和精选指标。
+- Python 根据字段缺失、零评论、维度样本阈值和指标可用性生成 warnings。
+- 任一 warning 存在时发布 partial 并推进 partially_completed/100；否则 completed/100。
+- report 模型 timeout、供应商错误、无效 JSON 或语义错误时，失败 audit event 仍写入 model_runs。
+- 受控模型失败后使用相同 source catalog 生成确定性 recommendation 和独立 difference fact
+  claim，增加模型 fallback 警告并发布 partial 报告。
+- LLM 不可用不会使已经完成 M1-F 的任务永久停留在 failed。
+
+### 20.4 API 与 Web
+
+新增：
+
+```text
+GET /api/v1/comparisons/{comparison_id}/report
+```
+
+- 仅 completed/partially_completed 任务可以读取最新已发布报告。
+- 响应返回 report ID、version、status、summary、differences、full_comparison、warnings、
+  generated_at 和按 display_order 排序的 claims。
+- `/comparisons/:id/report` 形成第六步页面，展示决策摘要、场景建议、理由、风险、关键差异、
+  商品事实、维度指标和来源证据。
+- partial 报告明确显示数据不足与模型 fallback 警告。
+- 报告页刷新通过路由任务 ID 和服务端 latest report 恢复。
+- M1-G 不实现追问、重新生成、多版本切换、导出、鉴权或真实淘宝 Provider。

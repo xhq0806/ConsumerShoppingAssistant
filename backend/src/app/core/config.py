@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     deepseek_report_reasoning_effort: Literal["high", "max"] = "high"
     deepseek_analysis_max_tokens: int = Field(default=2000, ge=1)
     deepseek_report_max_tokens: int = Field(default=8000, ge=1)
+    deepseek_report_timeout_seconds: float = Field(default=120, gt=0, le=120)
+    deepseek_report_max_retries: int = Field(default=0, ge=0, le=2)
     taobao_allowed_hosts: Annotated[tuple[str, ...], NoDecode] = (
         "item.taobao.com",
         "detail.tmall.com",

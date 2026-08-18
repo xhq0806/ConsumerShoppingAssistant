@@ -12,12 +12,14 @@ import {
   getComparison,
   getComparisonAnalysisProgress,
   getComparisonDimensions,
+  getComparisonReport,
   parseComparison,
   retryComparisonAnalysis,
   startComparisonAnalysis,
   updateComparisonPreferences,
   type AnalysisProgress,
   type ComparisonDetail,
+  type ComparisonReport,
   type DimensionSet,
 } from '@/api/comparisons'
 import ConfirmProductsView from './ConfirmProductsView.vue'
@@ -25,6 +27,7 @@ import DimensionsView from './DimensionsView.vue'
 import InputView from './InputView.vue'
 import PreferencesView from './PreferencesView.vue'
 import ProgressView from './ProgressView.vue'
+import ReportView from './ReportView.vue'
 import { limitPreferenceItems } from './preferenceLimits'
 
 vi.mock('@/api/comparisons', () => ({
@@ -39,6 +42,7 @@ vi.mock('@/api/comparisons', () => ({
   startComparisonAnalysis: vi.fn(),
   retryComparisonAnalysis: vi.fn(),
   getComparisonAnalysisProgress: vi.fn(),
+  getComparisonReport: vi.fn(),
 }))
 
 const comparisonFixture: ComparisonDetail = {
@@ -145,10 +149,10 @@ const dimensionSetFixture: DimensionSet = {
 
 const analysisProgressFixture: AnalysisProgress = {
   comparison_id: 'comparison-1',
-  status: 'processing',
-  progress: 75,
-  stage: 'metrics_ready',
-  message: '评论注解与确定性指标已准备，等待生成报告。',
+  status: 'partially_completed',
+  progress: 100,
+  stage: 'partially_completed',
+  message: '部分数据不足，已生成可追溯的降级报告。',
   fetched_review_count: 3,
   valid_review_count: 2,
   annotated_review_count: 1,
@@ -156,6 +160,89 @@ const analysisProgressFixture: AnalysisProgress = {
   metric_count: 144,
   can_retry: false,
   polling_complete: true,
+}
+
+const reportFixture: ComparisonReport = {
+  id: 'report-1',
+  comparison_id: 'comparison-1',
+  version: 1,
+  status: 'partial',
+  summary: {
+    headline: '当前更适合考虑星河 X1',
+    recommended_product_id: 'product-1',
+    recommendation_claim_index: 0,
+    scenario_recommendations: [
+      {
+        scenario: '日常通勤',
+        product_id: 'product-1',
+        claim_index: 0,
+      },
+    ],
+    key_reason_claim_indexes: [0],
+    risk_claim_indexes: [],
+    confidence: 0.72,
+  },
+  differences: [
+    {
+      dimension_code: 'price',
+      dimension_name: '价格',
+      claim_index: 0,
+    },
+  ],
+  full_comparison: {
+    products: [
+      {
+        id: 'product-1',
+        title: '星河 X1 合成测试手机',
+        category: '手机',
+        brand: '星河实验室',
+        shop_name: '星河合成数据旗舰店',
+        price: '3999.00',
+        currency: 'CNY',
+        specifications: { 存储: '256GB' },
+        after_sales: [],
+        review_count: 2,
+        metrics: [
+          {
+            id: 'metric-1',
+            dimension_code: 'price',
+            metric_type: 'annotation_count',
+            numeric_value: '1.00000000',
+            sample_size: 2,
+            confidence: 0.9,
+          },
+        ],
+      },
+    ],
+    dimensions: [
+      {
+        id: 'dimension-1',
+        code: 'price',
+        name: '价格',
+        min_sample_size: 0,
+      },
+    ],
+    task_metrics: [],
+    evidence_count: 1,
+  },
+  warnings: ['星河 X1 合成测试手机缺少售后信息。'],
+  generated_at: '2026-08-18T08:00:00Z',
+  claims: [
+    {
+      id: 'claim-1',
+      claim_type: 'recommendation',
+      text: '基于当前预算和已获取价格，更建议考虑星河 X1。',
+      source_refs: [
+        {
+          type: 'product_snapshot',
+          id: 'snapshot-1',
+          field: 'price',
+        },
+      ],
+      confidence: 0.72,
+      display_order: 0,
+    },
+  ],
 }
 
 beforeEach(() => {
@@ -337,7 +424,7 @@ describe('M1-C workflow views', () => {
     await flushPromises()
 
     expect(startComparisonAnalysis).toHaveBeenCalledWith('comparison-1')
-    expect(wrapper.text()).toContain('评论注解与确定性指标已准备')
+    expect(wrapper.text()).toContain('降级报告')
     expect(wrapper.text()).toContain('Provider 获取')
     expect(wrapper.text()).toContain('清洗后有效')
     expect(wrapper.text()).toContain('已有维度注解')
@@ -345,6 +432,7 @@ describe('M1-C workflow views', () => {
     expect(wrapper.text()).toContain('144')
     expect(wrapper.text()).toContain('3')
     expect(wrapper.text()).toContain('2')
+    expect(wrapper.text()).toContain('查看对比报告')
   })
 
   it('首次进度查询临时失败后自动重试并继续启动任务', async () => {
@@ -383,14 +471,37 @@ describe('M1-C workflow views', () => {
 
     expect(getComparisonAnalysisProgress).toHaveBeenCalledTimes(2)
     expect(startComparisonAnalysis).toHaveBeenCalledWith('comparison-1')
-    expect(wrapper.text()).toContain('评论注解与确定性指标已准备')
+    expect(wrapper.text()).toContain('降级报告')
     wrapper.unmount()
     vi.useRealTimers()
+  })
+
+  it('报告页恢复降级报告并展示摘要、差异、完整对比和来源', async () => {
+    vi.mocked(getComparison).mockResolvedValue({
+      ...comparisonFixture,
+      status: 'partially_completed',
+      progress: 100,
+    })
+    vi.mocked(getComparisonReport).mockResolvedValue(reportFixture)
+    const router = createTestRouter()
+    await router.push('/comparisons/comparison-1/report')
+    await router.isReady()
+    const wrapper = mount(ReportView, {
+      global: { plugins: [createPinia(), router, Antd] },
+    })
+    await flushPromises()
+
+    expect(getComparisonReport).toHaveBeenCalledWith('comparison-1')
+    expect(wrapper.text()).toContain('当前更适合考虑星河 X1')
+    expect(wrapper.text()).toContain('部分数据不足')
+    expect(wrapper.text()).toContain('关键差异')
+    expect(wrapper.text()).toContain('完整对比')
+    expect(wrapper.text()).toContain('商品事实 · price')
   })
 })
 
 function createTestRouter() {
-  /** 创建覆盖 M1-E 五个页面的内存路由。by AI.Coding */
+  /** 创建覆盖 M1-G 六个页面的内存路由。by AI.Coding */
   return createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -414,6 +525,11 @@ function createTestRouter() {
         path: '/comparisons/:id/progress',
         name: 'comparison-progress',
         component: ProgressView,
+      },
+      {
+        path: '/comparisons/:id/report',
+        name: 'comparison-report',
+        component: ReportView,
       },
     ],
   })

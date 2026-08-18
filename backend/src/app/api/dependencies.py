@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.analysis_tasks import AnalysisApplicationService
 from app.application.comparisons import ComparisonApplicationService
+from app.application.report_generation import ReportApplicationService
 from app.core.config import Settings, get_settings
 from app.infrastructure.db.dependencies import session_factory
 from app.infrastructure.db.transaction import UnitOfWork
@@ -62,3 +63,10 @@ def get_analysis_service(
         dispatcher=dispatcher,
         max_reviews_per_product=settings.review_max_per_product,
     )
+
+
+def get_report_service(
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(get_uow_factory)],
+) -> ReportApplicationService:
+    """组装 latest report 查询服务，HTTP 进程不直接执行模型生成。by AI.Coding"""
+    return ReportApplicationService(uow_factory)

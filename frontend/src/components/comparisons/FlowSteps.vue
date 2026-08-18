@@ -2,7 +2,7 @@
 // M1-F 输入、确认、偏好、维度和评论分析进度导航。by AI.Coding
 
 defineProps<{
-  current: 0 | 1 | 2 | 3 | 4
+  current: 0 | 1 | 2 | 3 | 4 | 5
 }>()
 
 const items = [
@@ -11,6 +11,7 @@ const items = [
   { title: '购买偏好', description: '预算、场景与关注点' },
   { title: '对比维度', description: '调整重点与顺序' },
   { title: '任务进度', description: '注解并计算指标' },
+  { title: '对比报告', description: '建议、差异与证据' },
 ]
 </script>
 

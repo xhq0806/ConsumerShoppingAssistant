@@ -46,7 +46,7 @@ def create_chat_model(
             settings.deepseek_report_reasoning_effort if settings.deepseek_report_thinking else None
         ),
         max_tokens=settings.deepseek_report_max_tokens,
-        timeout_seconds=settings.llm_timeout_seconds,
+        timeout_seconds=settings.deepseek_report_timeout_seconds,
         transport=transport,
     )
 

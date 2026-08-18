@@ -63,8 +63,8 @@ const stages = computed(() => [
   },
   {
     key: 'report',
-    title: '报告待生成',
-    description: '注解与指标就绪，等待下一阶段生成购买建议',
+    title: '生成对比报告',
+    description: '形成购买建议、关键差异和来源证据',
     state: stageState(5),
   },
 ])
@@ -91,7 +91,7 @@ async function initialize(): Promise<void> {
     let current = await comparisonStore.loadAnalysisProgress(comparisonId.value)
     if (
       current.status === 'queued' ||
-      (current.status === 'processing' && current.progress < 75)
+      (current.status === 'processing' && current.progress < 100)
     ) {
       current = await comparisonStore.startAnalysis(comparisonId.value)
     }
@@ -172,12 +172,9 @@ function stageState(index: number): 'done' | 'active' | 'pending' | 'failed' {
   if (status === 'completed' || status === 'partially_completed') currentIndex = 5
   if (index < currentIndex) return 'done'
   if (index === currentIndex) {
-    if (
-      status === 'processing' &&
-      (index === 5 || (index === 2 && (progress.value?.progress ?? 0) >= 45))
-    ) {
+    if (status === 'completed' || status === 'partially_completed') return 'done'
+    if (status === 'processing' && index === 2 && (progress.value?.progress ?? 0) >= 45)
       return 'done'
-    }
     return 'active'
   }
   return 'pending'
@@ -216,7 +213,10 @@ function stageState(index: number): 'done' | 'active' | 'pending' | 'failed' {
           <div class="progress-copy">
             <span :class="['status-mark', `status-${progress?.status ?? 'queued'}`]">
               <CheckCircleOutlined
-                v-if="progress?.status === 'processing' && progress.progress >= 75"
+                v-if="
+                  progress?.status === 'completed' ||
+                  progress?.status === 'partially_completed'
+                "
               />
               <WarningOutlined v-else-if="progress?.status === 'failed'" />
               <ClockCircleOutlined v-else />
@@ -295,6 +295,28 @@ function stageState(index: number): 'done' | 'active' | 'pending' | 'failed' {
             重新执行
           </a-button>
         </footer>
+
+        <footer
+          v-if="
+            progress?.status === 'completed' ||
+            progress?.status === 'partially_completed'
+          "
+          class="report-actions"
+        >
+          <span>报告已生成，可查看建议、差异和来源证据。</span>
+          <a-button
+            class="primary-command"
+            type="primary"
+            @click="
+              router.push({
+                name: 'comparison-report',
+                params: { id: comparisonId },
+              })
+            "
+          >
+            查看对比报告
+          </a-button>
+        </footer>
       </a-spin>
     </main>
   </div>
@@ -356,6 +378,12 @@ function stageState(index: number): 'done' | 'active' | 'pending' | 'failed' {
 }
 
 .status-processing {
+  border-color: var(--positive);
+  color: var(--positive);
+}
+
+.status-completed,
+.status-partially_completed {
   border-color: var(--positive);
   color: var(--positive);
 }
@@ -476,6 +504,19 @@ function stageState(index: number): 'done' | 'active' | 'pending' | 'failed' {
   gap: 16px;
 }
 
+.report-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 18px;
+  border: 1px solid rgb(40 111 81 / 25%);
+  background: rgb(40 111 81 / 6%);
+  padding: 15px 18px;
+  color: var(--positive);
+  font-size: 12px;
+  gap: 16px;
+}
+
 @media (max-width: 600px) {
   .progress-summary,
   .stage-list article,
@@ -501,7 +542,8 @@ function stageState(index: number): 'done' | 'active' | 'pending' | 'failed' {
     padding-top: 0;
   }
 
-  .failure-actions {
+  .failure-actions,
+  .report-actions {
     align-items: stretch;
     flex-direction: column;
   }

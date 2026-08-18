@@ -79,7 +79,7 @@ alembic check
 M1-D 通过 `0006` 写入通用和 Fixture 手机品类维度种子，不修改 Schema。当前 head 为
 `0006`。Repository 不自行提交事务，由应用用例或 UnitOfWork 控制提交与回滚。
 
-## M1-F 对比 API、Worker 与页面
+## M1-G 对比 API、Worker 与页面
 
 ```text
 POST /api/v1/comparisons
@@ -93,6 +93,7 @@ POST /api/v1/comparisons/{comparison_id}/dimensions/confirm
 POST /api/v1/comparisons/{comparison_id}/analysis/start
 POST /api/v1/comparisons/{comparison_id}/analysis/retry
 GET  /api/v1/comparisons/{comparison_id}/analysis/progress
+GET  /api/v1/comparisons/{comparison_id}/report
 ```
 
 - 创建接口在事务外规范化 URL，并支持不保存原始键的创建幂等。
@@ -114,6 +115,11 @@ GET  /api/v1/comparisons/{comparison_id}/analysis/progress
 - 每批提交注解、模型审计和已处理 review IDs；retry 从断点继续且不重新获取评论。
 - Python 重建商品级与任务级计数、比例、覆盖率和置信度，最终推进到 `processing/75`。
 - Provider unavailable/rate limit，以及 LLM timeout/rate limit/unavailable/invalid output 可 retry。
+- processing/75 后创建 version=1 generating 报告并推进 reporting/80。
+- report profile 只选择解释、claim 和来源；完整商品事实与指标值由 Python 构造。
+- claim 来源在应用层对照 source catalog，并在 Repository 层再次校验当前任务归属。
+- 数据缺失或 report 模型失败时发布 partial 报告并进入 partially_completed/100。
+- 无数据警告时发布 completed 报告并进入 completed/100。
 - API 尚无用户身份与任务归属控制，只能用于本地开发，不得直接公网开放。
 
 前端路由：
@@ -124,6 +130,7 @@ GET  /api/v1/comparisons/{comparison_id}/analysis/progress
 /comparisons/:id/preferences           评论范围与购买偏好
 /comparisons/:id/dimensions            动态维度调整与确认
 /comparisons/:id/progress              评论采集、智能注解与指标进度
+/comparisons/:id/report                决策摘要、差异、完整对比与来源证据
 ```
 
 - 页面恢复以路由中的任务 ID 和服务端详情为真源，不依赖 Pinia 内存状态。
@@ -131,7 +138,8 @@ GET  /api/v1/comparisons/{comparison_id}/analysis/progress
 - Nginx 容器将 `/api/` 代理到 `api:8000`，并使用 SPA fallback 支持深层路由刷新。
 - 原始商品链接仅存在于创建前的表单内存中，不写入浏览器持久化。
 - 维度页支持重点/其他可选、搜索、增删、拖拽、顺序按钮、理由和数据风险。
-- 进度页自动启动 queued 或恢复 processing<75 的任务并每秒轮询；75 或 failed 时停止。
+- 进度页自动启动 queued 或恢复 processing<100 的任务并每秒轮询；终态或 failed 时停止。
+- 报告页只查询当前任务最新已发布报告，刷新恢复不依赖 Pinia 内存。
 
 Compose 包含一次性 `migrate` 服务，API 和 Worker 仅在迁移成功后启动。Celery 同步 task
 每次在自身事件循环内创建并释放 asyncpg engine，避免连续任务复用已关闭事件循环连接。
@@ -146,11 +154,12 @@ npm run test -- --run
 npm run build
 ```
 
-M1-F 的浏览器验收覆盖完整五步流程、真实 Celery/DeepSeek Worker、注解与指标计数、刷新恢复、桌面端和
-`390x844` 移动端布局。验收截图位于：
+M1-G 的浏览器验收覆盖完整六步流程、真实 Celery/DeepSeek 调用、确定性 fallback、报告刷新
+恢复、桌面端和 `390x844` 移动端布局。验收截图位于：
 
 ```text
-docs/assets/m1f-progress-desktop.png
+docs/assets/m1g-report-desktop.png
+docs/assets/m1g-report-mobile.png
 ```
 
 ## 新 Commerce Provider 规则
@@ -188,15 +197,18 @@ DEEPSEEK_REPORT_MODEL=deepseek-v4-pro
 DEEPSEEK_ANALYSIS_THINKING=false
 DEEPSEEK_REPORT_THINKING=true
 DEEPSEEK_REPORT_REASONING_EFFORT=high
+DEEPSEEK_REPORT_TIMEOUT_SECONDS=120
+DEEPSEEK_REPORT_MAX_RETRIES=0
 ```
 
 - analysis profile 使用 `/chat/completions`、`response_format=json_object` 和非思考模式。
-- report profile 使用 V4 Pro、思考模式和 high reasoning effort。
+- report profile 使用 V4 Pro、思考模式、high reasoning effort、120 秒单次超时和 0 次重试。
 - Adapter 自动增加只输出 JSON 的系统约束，但业务 Prompt 仍需声明具体字段和含义。
 - DeepSeek 空 content、无效 JSON 或 Pydantic 校验失败继续由 Gateway 重试。
 - 400/422 无效请求、401/403 鉴权和 402 额度不足不重试；429、5xx、连接错误和超时映射为受控 LLM 错误。
 - Adapter 不保存 `reasoning_content`，审计只记录 provider/model/token/时延/状态。
-- M1-F 评论注解通过 analysis profile 接入；report profile 仍等待 M1-G。
+- M1-F 评论注解通过 analysis profile 接入；M1-G 报告通过 report profile 接入。
+- report 输出无效或超时时，系统记录错误 model run 并发布确定性 partial 基础报告。
 
 配置完成后的最小连通性检查：
 

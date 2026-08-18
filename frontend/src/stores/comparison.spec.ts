@@ -10,12 +10,14 @@ import {
   getComparison,
   getComparisonAnalysisProgress,
   getComparisonDimensions,
+  getComparisonReport,
   parseComparison,
   retryComparisonAnalysis,
   startComparisonAnalysis,
   updateComparisonPreferences,
   type AnalysisProgress,
   type ComparisonDetail,
+  type ComparisonReport,
   type DimensionSet,
 } from '@/api/comparisons'
 import { useComparisonStore } from './comparison'
@@ -32,6 +34,7 @@ vi.mock('@/api/comparisons', () => ({
   startComparisonAnalysis: vi.fn(),
   retryComparisonAnalysis: vi.fn(),
   getComparisonAnalysisProgress: vi.fn(),
+  getComparisonReport: vi.fn(),
 }))
 
 const comparisonFixture: ComparisonDetail = {
@@ -70,10 +73,10 @@ const dimensionSetFixture: DimensionSet = {
 
 const analysisProgressFixture: AnalysisProgress = {
   comparison_id: 'comparison-1',
-  status: 'processing',
-  progress: 75,
-  stage: 'metrics_ready',
-  message: '评论注解与确定性指标已准备，等待生成报告。',
+  status: 'partially_completed',
+  progress: 100,
+  stage: 'partially_completed',
+  message: '降级报告已生成。',
   fetched_review_count: 3,
   valid_review_count: 2,
   annotated_review_count: 1,
@@ -81,6 +84,46 @@ const analysisProgressFixture: AnalysisProgress = {
   metric_count: 144,
   can_retry: false,
   polling_complete: true,
+}
+
+const reportFixture: ComparisonReport = {
+  id: 'report-1',
+  comparison_id: 'comparison-1',
+  version: 1,
+  status: 'partial',
+  summary: {
+    headline: '当前更适合预算优先选择',
+    recommended_product_id: 'product-1',
+    recommendation_claim_index: 0,
+    scenario_recommendations: [],
+    key_reason_claim_indexes: [0],
+    risk_claim_indexes: [],
+    confidence: 0.72,
+  },
+  differences: [],
+  full_comparison: {
+    products: [],
+    dimensions: [],
+    task_metrics: [],
+    evidence_count: 0,
+  },
+  warnings: ['部分字段缺失。'],
+  generated_at: '2026-08-18T08:00:00Z',
+  claims: [
+    {
+      id: 'claim-1',
+      claim_type: 'recommendation',
+      text: '基于当前数据给出建议。',
+      source_refs: [
+        {
+          type: 'analysis_metric',
+          id: 'metric-1',
+        },
+      ],
+      confidence: 0.72,
+      display_order: 0,
+    },
+  ],
 }
 
 describe('useComparisonStore', () => {
@@ -210,5 +253,16 @@ describe('useComparisonStore', () => {
     expect(getComparisonAnalysisProgress).toHaveBeenCalledWith('comparison-1')
     expect(retryComparisonAnalysis).toHaveBeenCalledWith('comparison-1')
     expect(store.analysisProgress?.status).toBe('queued')
+  })
+
+  it('按任务 ID 加载最新报告', async () => {
+    vi.mocked(getComparisonReport).mockResolvedValue(reportFixture)
+    const store = useComparisonStore()
+
+    const report = await store.loadReport('comparison-1')
+
+    expect(getComparisonReport).toHaveBeenCalledWith('comparison-1')
+    expect(report.status).toBe('partial')
+    expect(store.report?.summary.headline).toContain('预算优先')
   })
 })

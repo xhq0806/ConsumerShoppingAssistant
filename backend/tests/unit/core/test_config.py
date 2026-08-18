@@ -50,6 +50,8 @@ def test_deepseek_configuration_keeps_api_key_secret() -> None:
     assert "sk-test-private" not in repr(settings)
     assert settings.deepseek_analysis_model == "deepseek-v4-flash"
     assert settings.deepseek_report_model == "deepseek-v4-pro"
+    assert settings.deepseek_report_timeout_seconds == 120
+    assert settings.deepseek_report_max_retries == 0
 
 
 def test_deepseek_base_url_requires_https_without_credentials() -> None:

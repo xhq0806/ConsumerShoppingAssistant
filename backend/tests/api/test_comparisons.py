@@ -1,5 +1,6 @@
 """M1-B 对比 API 契约和依赖替换测试。by AI.Coding"""
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -7,7 +8,11 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from app.api.dependencies import get_analysis_service, get_comparison_service
+from app.api.dependencies import (
+    get_analysis_service,
+    get_comparison_service,
+    get_report_service,
+)
 from app.application.analysis_tasks import AnalysisProgressView
 from app.application.comparisons import (
     ComparisonView,
@@ -17,6 +22,10 @@ from app.application.comparisons import (
     DimensionView,
     ProductView,
     UpdatePreferencesCommand,
+)
+from app.application.report_generation import (
+    ComparisonReportView,
+    ReportClaimView,
 )
 from app.domain.comparisons.preferences import UserPreferences
 from app.main import create_app
@@ -91,8 +100,68 @@ class _FakeComparisonService:
         return self._analysis_progress()
 
     async def get_analysis_progress(self, _comparison_id: object) -> AnalysisProgressView:
-        """返回评论注解与指标准备完成的稳定进度。by AI.Coding"""
-        return self._analysis_progress(status="processing", progress=75)
+        """返回降级报告已完成的稳定进度。by AI.Coding"""
+        return self._analysis_progress(status="partially_completed", progress=100)
+
+    async def get_latest_report(self, _comparison_id: object) -> ComparisonReportView:
+        """返回带来源 claim 的稳定降级报告。by AI.Coding"""
+        report_id = uuid4()
+        product_id = uuid4()
+        snapshot_id = uuid4()
+        return ComparisonReportView(
+            id=report_id,
+            comparison_id=self.comparison_id,
+            version=1,
+            status="partial",
+            summary={
+                "headline": "当前更适合预算优先选择",
+                "recommended_product_id": str(product_id),
+                "recommendation_claim_index": 0,
+                "scenario_recommendations": [],
+                "key_reason_claim_indexes": [0],
+                "risk_claim_indexes": [],
+                "confidence": 0.72,
+            },
+            differences=(
+                {
+                    "dimension_code": "price",
+                    "dimension_name": "价格",
+                    "claim_index": 0,
+                },
+            ),
+            full_comparison={
+                "products": [
+                    {
+                        "id": str(product_id),
+                        "title": "云杉 S2",
+                        "price": "3599.00",
+                        "currency": "CNY",
+                        "metrics": [],
+                    }
+                ],
+                "dimensions": [],
+                "task_metrics": [],
+                "evidence_count": 0,
+            },
+            warnings=("云杉 S2 缺少品牌信息。",),
+            generated_at=datetime.now(UTC),
+            claims=(
+                ReportClaimView(
+                    id=uuid4(),
+                    claim_type="recommendation",
+                    text="基于当前预算和价格，更建议考虑云杉 S2。",
+                    source_refs=(
+                        {
+                            "type": "product_snapshot",
+                            "id": str(snapshot_id),
+                            "field": "price",
+                        },
+                    ),
+                    confidence=0.72,
+                    display_order=0,
+                ),
+            ),
+        )
 
     def _view(self, *, preferences: UserPreferences | None = None) -> ComparisonView:
         """构造无敏感字段的稳定应用视图。by AI.Coding"""
@@ -163,15 +232,15 @@ class _FakeComparisonService:
             comparison_id=self.comparison_id,
             status=status,
             progress=progress,
-            stage="queued" if status == "queued" else "metrics_ready",
-            message="任务已排队。" if status == "queued" else "评论指标已准备。",
-            fetched_review_count=3 if status == "processing" else 0,
-            valid_review_count=2 if status == "processing" else 0,
-            annotated_review_count=1 if status == "processing" else 0,
-            annotation_count=1 if status == "processing" else 0,
-            metric_count=144 if status == "processing" else 0,
+            stage="queued" if status == "queued" else "partially_completed",
+            message="任务已排队。" if status == "queued" else "降级报告已生成。",
+            fetched_review_count=0 if status == "queued" else 3,
+            valid_review_count=0 if status == "queued" else 2,
+            annotated_review_count=0 if status == "queued" else 1,
+            annotation_count=0 if status == "queued" else 1,
+            metric_count=0 if status == "queued" else 144,
             can_retry=False,
-            polling_complete=status == "processing",
+            polling_complete=status in {"completed", "partially_completed", "failed"},
         )
 
 
@@ -183,6 +252,7 @@ def comparison_app() -> tuple[FastAPI, _FakeComparisonService]:
     # 覆盖统一依赖工厂，证明路由可测试且不会自行访问 ORM 或 Provider。
     application.dependency_overrides[get_comparison_service] = lambda: fake_service
     application.dependency_overrides[get_analysis_service] = lambda: fake_service
+    application.dependency_overrides[get_report_service] = lambda: fake_service
     return application, fake_service
 
 
@@ -260,6 +330,7 @@ async def test_comparison_routes_forbid_extra_input_and_publish_operation_ids(
         "start_comparison_analysis",
         "retry_comparison_analysis",
         "get_comparison_analysis_progress",
+        "get_comparison_report",
     } <= operation_ids
 
 
@@ -398,10 +469,10 @@ async def test_analysis_routes_start_retry_and_return_progress_contract(
     assert retried.status_code == 200
     assert progress.json() == {
         "comparison_id": str(fake_service.comparison_id),
-        "status": "processing",
-        "progress": 75,
-        "stage": "metrics_ready",
-        "message": "评论指标已准备。",
+        "status": "partially_completed",
+        "progress": 100,
+        "stage": "partially_completed",
+        "message": "降级报告已生成。",
         "fetched_review_count": 3,
         "valid_review_count": 2,
         "annotated_review_count": 1,
@@ -410,3 +481,26 @@ async def test_analysis_routes_start_retry_and_return_progress_contract(
         "can_retry": False,
         "polling_complete": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_report_route_returns_structured_blocks_and_safe_claim_sources(
+    comparison_app: tuple[FastAPI, _FakeComparisonService],
+) -> None:
+    """报告端点返回四层结构和受控来源，不暴露 Prompt 或 reasoning。by AI.Coding"""
+    application, fake_service = comparison_app
+    async with AsyncClient(
+        transport=ASGITransport(app=application),
+        base_url="http://test",
+    ) as client:
+        response = await client.get(f"/api/v1/comparisons/{fake_service.comparison_id}/report")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "partial"
+    assert payload["version"] == 1
+    assert payload["summary"]["recommendation_claim_index"] == 0
+    assert payload["differences"][0]["dimension_code"] == "price"
+    assert payload["claims"][0]["source_refs"][0]["type"] == "product_snapshot"
+    assert "prompt" not in response.text.casefold()
+    assert "reasoning" not in response.text.casefold()

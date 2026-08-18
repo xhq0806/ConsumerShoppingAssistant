@@ -4,6 +4,10 @@ import asyncio
 from uuid import UUID
 
 from app.application.analysis_tasks import AnalysisApplicationService
+from app.application.report_generation import (
+    GatewayPurchaseReportGenerator,
+    ReportApplicationService,
+)
 from app.application.review_analysis import GatewayReviewAnnotationAnalyzer
 from app.core.config import get_settings
 from app.infrastructure.db.engine import create_engine
@@ -19,11 +23,21 @@ async def _run_process_comparison(comparison_id: UUID) -> dict[str, object]:
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
     try:
+
+        def uow_factory() -> UnitOfWork:
+            """为报告和分析阶段创建共享 session factory 的独立工作单元。by AI.Coding"""
+            return UnitOfWork(session_factory)
+
+        report_service = ReportApplicationService(
+            uow_factory,
+            GatewayPurchaseReportGenerator(settings),
+        )
         service = AnalysisApplicationService(
-            lambda: UnitOfWork(session_factory),
+            uow_factory,
             FixtureCommerceDataProvider(settings),
             dispatcher=None,
             annotation_analyzer=GatewayReviewAnnotationAnalyzer(settings),
+            report_service=report_service,
             max_reviews_per_product=settings.review_max_per_product,
         )
         result = await service.process_comparison(comparison_id)

@@ -13,3 +13,4 @@
 | M1-E 异步评论采集与进度闭环 | [m1e-async-review-ingestion.md](m1e-async-review-ingestion.md) | 2026-08-17 | Compose migrate、Celery Worker、评论清洗、进度 API/页面 |
 | DeepSeek LLM 配置与 Adapter | [deepseek-llm-adapter.md](deepseek-llm-adapter.md) | 2026-08-17 | Chat Completions、analysis/report profile、JSON、thinking、脱敏审计 |
 | M1-F 评论智能注解与指标计算闭环 | [m1f-review-annotation-metrics.md](m1f-review-annotation-metrics.md) | 2026-08-17 | DeepSeek analysis、评论证据注解、断点恢复、确定性指标、processing/75 |
+| M1-G 报告生成与任务完成闭环 | [m1g-report-completion.md](m1g-report-completion.md) | 2026-08-18 | report profile、claim 来源、partial fallback、报告 API/页面、任务终态 |
