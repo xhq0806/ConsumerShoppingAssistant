@@ -336,7 +336,7 @@ def _dimension_set_response(view: DimensionSetView) -> DimensionSetResponse:
 
 
 def _analysis_progress_response(view: AnalysisProgressView) -> AnalysisProgressResponse:
-    """显式映射异步分析进度白名单。by AI.Coding"""
+    """显式映射异步分析进度和 M1-F 安全计数白名单。by AI.Coding"""
     return AnalysisProgressResponse(
         comparison_id=view.comparison_id,
         status=view.status,
@@ -345,6 +345,9 @@ def _analysis_progress_response(view: AnalysisProgressView) -> AnalysisProgressR
         message=view.message,
         fetched_review_count=view.fetched_review_count,
         valid_review_count=view.valid_review_count,
+        annotated_review_count=view.annotated_review_count,
+        annotation_count=view.annotation_count,
+        metric_count=view.metric_count,
         can_retry=view.can_retry,
         polling_complete=view.polling_complete,
     )

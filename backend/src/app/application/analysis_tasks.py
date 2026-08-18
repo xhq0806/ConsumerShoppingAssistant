@@ -2,22 +2,46 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 from urllib.parse import urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
+from app.application.review_analysis import (
+    ReviewAnnotationAnalyzer,
+    ReviewAnnotationInvocation,
+    ReviewAnnotationInvocationFailure,
+)
 from app.core.errors import (
     DomainConflictError,
+    LLMError,
     ProviderError,
     ResourceNotFoundError,
 )
 from app.domain.comparisons import ComparisonStatus, TaskEventType, TaskStage
+from app.domain.metrics.calculation import (
+    MetricAnnotation,
+    MetricDimension,
+    MetricReview,
+    calculate_review_metrics,
+)
+from app.domain.reviews.annotation import (
+    AnnotationDimension,
+    ReviewForAnnotation,
+)
 from app.domain.reviews.cleaning import ReviewCleaningResult, clean_reviews
 from app.infrastructure.db.analysis_repository import AnalysisRepository
 from app.infrastructure.db.comparison_repository import ComparisonRepository
-from app.infrastructure.db.models import ComparisonProduct, ComparisonTask
+from app.infrastructure.db.model_run_repository import ModelRunRepository
+from app.infrastructure.db.models import (
+    ComparisonProduct,
+    ComparisonTask,
+    DimensionDefinition,
+    RawReview,
+    ReviewAnnotation,
+)
 from app.infrastructure.db.transaction import UnitOfWork
 from app.providers.commerce.base import CommerceDataProvider
 from app.providers.commerce.dto import (
@@ -25,11 +49,20 @@ from app.providers.commerce.dto import (
     ReviewFetchRequest,
     ReviewProviderResult,
 )
+from app.providers.llm.base import LLMAuditEvent
 
-_RETRYABLE_ANALYSIS_ERROR_CODES = frozenset({"PROVIDER_UNAVAILABLE", "PROVIDER_RATE_LIMITED"})
+_RETRYABLE_ANALYSIS_ERROR_CODES = frozenset(
+    {
+        "PROVIDER_UNAVAILABLE",
+        "PROVIDER_RATE_LIMITED",
+        "LLM_TIMEOUT",
+        "LLM_RATE_LIMITED",
+        "LLM_PROVIDER_UNAVAILABLE",
+        "LLM_STRUCTURED_OUTPUT_INVALID",
+    }
+)
 _POLLING_COMPLETE_STATUSES = frozenset(
     {
-        ComparisonStatus.PROCESSING,
         ComparisonStatus.COMPLETED,
         ComparisonStatus.PARTIALLY_COMPLETED,
         ComparisonStatus.FAILED,
@@ -56,6 +89,9 @@ class AnalysisProgressView:
     message: str
     fetched_review_count: int
     valid_review_count: int
+    annotated_review_count: int
+    annotation_count: int
+    metric_count: int
     can_retry: bool
     polling_complete: bool
 
@@ -69,6 +105,9 @@ class AnalysisExecutionResult:
     status: str
     fetched_review_count: int
     valid_review_count: int
+    annotated_review_count: int
+    annotation_count: int
+    metric_count: int
 
 
 @dataclass(frozen=True)
@@ -89,6 +128,24 @@ class _ProductReviewBatch:
     cleaning_result: ReviewCleaningResult
 
 
+@dataclass(frozen=True)
+class _AnalysisWorkClaim:
+    """表示 Worker 当前应获取评论、恢复注解或忽略消息。by AI.Coding"""
+
+    mode: Literal["fetch", "resume", "ignored"]
+    targets: tuple[_ReviewFetchTarget, ...]
+    review_window_days: int
+
+
+@dataclass(frozen=True)
+class _AnnotationContext:
+    """保存一次注解循环读取到的稳定任务输入和断点。by AI.Coding"""
+
+    reviews: tuple[ReviewForAnnotation, ...]
+    dimensions: tuple[AnnotationDimension, ...]
+    processed_review_ids: frozenset[UUID]
+
+
 class AnalysisApplicationService:
     """编排分析投递、评论采集和进度恢复。by AI.Coding"""
 
@@ -98,19 +155,27 @@ class AnalysisApplicationService:
         commerce_provider: CommerceDataProvider,
         *,
         dispatcher: AnalysisTaskDispatcher | None,
+        annotation_analyzer: ReviewAnnotationAnalyzer | None = None,
         max_reviews_per_product: int = 500,
+        annotation_batch_size: int = 20,
     ) -> None:
-        """注入短事务、受限 Provider 和可选队列调度器。by AI.Coding"""
+        """注入短事务、Provider、模型注解器和可选队列调度器。by AI.Coding"""
+        if not 1 <= annotation_batch_size <= 20:
+            raise ValueError("评论注解批次必须在 1 到 20 之间")
         self._uow_factory = uow_factory
         self._commerce_provider = commerce_provider
         self._dispatcher = dispatcher
+        self._annotation_analyzer = annotation_analyzer
         self._max_reviews_per_product = max_reviews_per_product
+        self._annotation_batch_size = annotation_batch_size
 
     async def request_analysis(self, comparison_id: UUID) -> AnalysisProgressView:
-        """对 queued 任务执行可重放投递，运行中或已完成阶段幂等返回。by AI.Coding"""
+        """投递 queued 或未到 75 的 processing 任务，支持容器重启后恢复。by AI.Coding"""
         async with self._uow_factory() as uow:
             task = await self._required_task(self._comparison_repository(uow), comparison_id)
-            if task.status is ComparisonStatus.QUEUED:
+            if task.status is ComparisonStatus.QUEUED or (
+                task.status is ComparisonStatus.PROCESSING and task.progress < 75
+            ):
                 should_dispatch = True
             elif task.status in {
                 ComparisonStatus.FETCHING,
@@ -126,7 +191,7 @@ class AnalysisApplicationService:
         return await self.get_analysis_progress(comparison_id)
 
     async def retry_analysis(self, comparison_id: UUID) -> AnalysisProgressView:
-        """把可重试的分析失败重新排队，并在提交后再次投递。by AI.Coding"""
+        """把可重试的采集或模型失败重新排队，并保留已提交注解断点。by AI.Coding"""
         async with self._uow_factory() as uow:
             repository = self._comparison_repository(uow)
             task = await self._required_task(repository, comparison_id, for_update=True)
@@ -135,30 +200,41 @@ class AnalysisApplicationService:
             if not self._can_retry(task):
                 raise DomainConflictError("当前分析失败不可重试")
             repository.transition(task, ComparisonStatus.QUEUED)
-            task.progress = 0
+            task.progress = (
+                max(45, min(task.progress, 69)) if self._has_annotation_checkpoint(task) else 0
+            )
             task.error_code = None
             task.error_message = None
             repository.add_event(
                 comparison_id=task.id,
                 stage=TaskStage.QUEUED,
                 event_type=TaskEventType.STATUS_CHANGED,
-                progress=0,
+                progress=task.progress,
                 message="分析任务已重新排队。",
-                details={"status": ComparisonStatus.QUEUED.value},
+                details={
+                    "status": ComparisonStatus.QUEUED.value,
+                    "resuming_annotation": self._has_annotation_checkpoint(task),
+                },
             )
         # UoW 已提交 queued 后再执行外部投递；投递失败时数据库仍可恢复。
         self._required_dispatcher().dispatch(comparison_id)
         return await self.get_analysis_progress(comparison_id)
 
     async def get_analysis_progress(self, comparison_id: UUID) -> AnalysisProgressView:
-        """返回任务状态、阶段和不包含评论正文的进度计数。by AI.Coding"""
+        """返回任务状态、阶段和不包含评论正文或模型内容的进度计数。by AI.Coding"""
         async with self._uow_factory() as uow:
             task = await self._required_task(self._comparison_repository(uow), comparison_id)
-            valid_count = await self._analysis_repository(uow).count_reviews_for_comparison(
+            analysis_repository = self._analysis_repository(uow)
+            valid_count = await analysis_repository.count_reviews_for_comparison(comparison_id)
+            annotated_review_count = (
+                await analysis_repository.count_annotated_reviews_for_comparison(comparison_id)
+            )
+            annotation_count = await analysis_repository.count_annotations_for_comparison(
                 comparison_id
             )
+            metric_count = await analysis_repository.count_metrics_for_comparison(comparison_id)
             fetched_count = self._latest_fetched_count(task)
-            stage, message = self._progress_copy(task.status)
+            stage, message = self._progress_copy(task)
             return AnalysisProgressView(
                 comparison_id=task.id,
                 status=task.status.value,
@@ -167,65 +243,82 @@ class AnalysisApplicationService:
                 message=message,
                 fetched_review_count=fetched_count,
                 valid_review_count=valid_count,
+                annotated_review_count=annotated_review_count,
+                annotation_count=annotation_count,
+                metric_count=metric_count,
                 can_retry=self._can_retry(task),
-                polling_complete=task.status in _POLLING_COMPLETE_STATUSES,
+                polling_complete=(
+                    task.status in _POLLING_COMPLETE_STATUSES
+                    or (task.status is ComparisonStatus.PROCESSING and task.progress >= 75)
+                ),
             )
 
     async def process_comparison(self, comparison_id: UUID) -> AnalysisExecutionResult:
-        """Worker 抢占 queued 任务，在事务外获取评论并原子保存清洗结果。by AI.Coding"""
-        targets, review_window_days = await self._claim_for_fetching(comparison_id)
-        if targets is None:
-            progress = await self.get_analysis_progress(comparison_id)
-            return AnalysisExecutionResult(
-                comparison_id=comparison_id,
-                outcome="ignored",
-                status=progress.status,
-                fetched_review_count=progress.fetched_review_count,
-                valid_review_count=progress.valid_review_count,
-            )
+        """Worker 获取评论后继续执行可恢复的智能注解与确定性指标。by AI.Coding"""
+        claim = await self._claim_work(comparison_id)
+        if claim.mode == "ignored":
+            return await self._execution_from_progress(comparison_id, outcome="ignored")
         batches: list[_ProductReviewBatch] = []
-        try:
-            for target in targets:
-                provider_result = await self._commerce_provider.fetch_reviews(
-                    ReviewFetchRequest(
-                        product_url=target.product_url,
-                        sku_id=target.selected_external_sku_id,
-                        window_days=review_window_days,
-                        max_reviews=self._max_reviews_per_product,
+        if claim.mode == "fetch":
+            try:
+                for target in claim.targets:
+                    provider_result = await self._commerce_provider.fetch_reviews(
+                        ReviewFetchRequest(
+                            product_url=target.product_url,
+                            sku_id=target.selected_external_sku_id,
+                            window_days=claim.review_window_days,
+                            max_reviews=self._max_reviews_per_product,
+                        )
                     )
-                )
-                batches.append(
-                    _ProductReviewBatch(
-                        comparison_product_id=target.comparison_product_id,
-                        provider_result=provider_result,
-                        cleaning_result=clean_reviews(
-                            provider_result.reviews,
-                            window_days=review_window_days,
-                            actual_end_at=provider_result.actual_end_at,
-                        ),
+                    batches.append(
+                        _ProductReviewBatch(
+                            comparison_product_id=target.comparison_product_id,
+                            provider_result=provider_result,
+                            cleaning_result=clean_reviews(
+                                provider_result.reviews,
+                                window_days=claim.review_window_days,
+                                actual_end_at=provider_result.actual_end_at,
+                            ),
+                        )
                     )
-                )
-        except ProviderError as error:
-            await self._mark_failed(comparison_id, error)
-            return AnalysisExecutionResult(
-                comparison_id=comparison_id,
-                outcome="failed",
-                status=ComparisonStatus.FAILED.value,
-                fetched_review_count=0,
-                valid_review_count=0,
-            )
-        return await self._persist_batches(comparison_id, batches)
+            except ProviderError as error:
+                await self._mark_provider_failed(comparison_id, error)
+                return await self._execution_from_progress(comparison_id, outcome="failed")
+            persisted = await self._persist_batches(comparison_id, batches)
+            if not persisted:
+                return await self._execution_from_progress(comparison_id, outcome="ignored")
+        return await self._process_annotations_and_metrics(comparison_id)
 
-    async def _claim_for_fetching(
-        self, comparison_id: UUID
-    ) -> tuple[tuple[_ReviewFetchTarget, ...] | None, int]:
-        """通过任务根行锁让重复 Celery 消息只有一个进入 fetching。by AI.Coding"""
+    async def _claim_work(self, comparison_id: UUID) -> _AnalysisWorkClaim:
+        """通过任务根行锁决定获取评论、恢复注解或忽略重复消息。by AI.Coding"""
         async with self._uow_factory() as uow:
             repository = self._comparison_repository(uow)
             task = await self._required_task(repository, comparison_id, for_update=True)
+            if task.status is ComparisonStatus.PROCESSING and task.progress < 75:
+                return _AnalysisWorkClaim("resume", (), task.review_window_days)
             if task.status is not ComparisonStatus.QUEUED:
-                return None, task.review_window_days
+                return _AnalysisWorkClaim("ignored", (), task.review_window_days)
+            review_count = await self._analysis_repository(uow).count_reviews_for_comparison(
+                comparison_id
+            )
             repository.transition(task, ComparisonStatus.FETCHING)
+            if review_count > 0:
+                # retry 先经过 queued/fetching 合法状态，再立即恢复到已有评论的 processing。
+                repository.transition(task, ComparisonStatus.PROCESSING)
+                task.progress = max(45, min(task.progress, 69))
+                repository.add_event(
+                    comparison_id=task.id,
+                    stage=TaskStage.ANALYSIS,
+                    event_type=TaskEventType.STATUS_CHANGED,
+                    progress=task.progress,
+                    message="正在从已保存的评论注解断点继续分析。",
+                    details={
+                        "code": "REVIEW_ANNOTATION_RESUMED",
+                        "status": ComparisonStatus.PROCESSING.value,
+                        "processed_review_count": len(self._processed_review_ids(task)),
+                    },
+                )
+                return _AnalysisWorkClaim("resume", (), task.review_window_days)
             task.progress = 10
             task.error_code = None
             task.error_message = None
@@ -237,12 +330,16 @@ class AnalysisApplicationService:
                 message="开始获取近期评论。",
                 details={"status": ComparisonStatus.FETCHING.value},
             )
-            return self._fetch_targets(task.products), task.review_window_days
+            return _AnalysisWorkClaim(
+                "fetch",
+                self._fetch_targets(task.products),
+                task.review_window_days,
+            )
 
     async def _persist_batches(
         self, comparison_id: UUID, batches: Sequence[_ProductReviewBatch]
-    ) -> AnalysisExecutionResult:
-        """在全部 Provider 调用成功后原子写入有效评论并进入 processing。by AI.Coding"""
+    ) -> bool:
+        """在全部 Provider 调用成功后原子写入评论并建立 M1-F 初始断点。by AI.Coding"""
         fetched_count = sum(batch.cleaning_result.fetched_count for batch in batches)
         valid_count = sum(len(batch.cleaning_result.valid_reviews) for batch in batches)
         filtered_count = sum(batch.cleaning_result.filtered_out_count for batch in batches)
@@ -252,14 +349,7 @@ class AnalysisApplicationService:
             analysis_repository = self._analysis_repository(uow)
             task = await self._required_task(comparison_repository, comparison_id, for_update=True)
             if task.status is not ComparisonStatus.FETCHING:
-                progress = await analysis_repository.count_reviews_for_comparison(comparison_id)
-                return AnalysisExecutionResult(
-                    comparison_id=comparison_id,
-                    outcome="ignored",
-                    status=task.status.value,
-                    fetched_review_count=self._latest_fetched_count(task),
-                    valid_review_count=progress,
-                )
+                return False
             for batch in batches:
                 for review in batch.cleaning_result.valid_reviews:
                     analysis_repository.add_review_from_dto(
@@ -268,12 +358,19 @@ class AnalysisApplicationService:
                     )
             comparison_repository.transition(task, ComparisonStatus.PROCESSING)
             task.progress = 45
+            task.partial_result = {
+                "schema_version": 1,
+                "phase": "annotation",
+                "processed_review_ids": [],
+                "annotated_review_count": 0,
+                "annotation_count": 0,
+            }
             comparison_repository.add_event(
                 comparison_id=task.id,
                 stage=TaskStage.ANALYSIS,
                 event_type=TaskEventType.STATUS_CHANGED,
                 progress=45,
-                message="近期评论已获取并清洗，等待后续分析。",
+                message="近期评论已获取并清洗，开始智能注解。",
                 details={
                     "code": "REVIEW_FETCH_COMPLETED",
                     "status": ComparisonStatus.PROCESSING.value,
@@ -284,15 +381,9 @@ class AnalysisApplicationService:
                     "duplicate_review_count": duplicate_count,
                 },
             )
-        return AnalysisExecutionResult(
-            comparison_id=comparison_id,
-            outcome="processed",
-            status=ComparisonStatus.PROCESSING.value,
-            fetched_review_count=fetched_count,
-            valid_review_count=valid_count,
-        )
+        return True
 
-    async def _mark_failed(self, comparison_id: UUID, error: ProviderError) -> None:
+    async def _mark_provider_failed(self, comparison_id: UUID, error: ProviderError) -> None:
         """在独立事务把 fetching 任务标记为受控失败且不保存评论正文。by AI.Coding"""
         async with self._uow_factory() as uow:
             repository = self._comparison_repository(uow)
@@ -313,6 +404,379 @@ class AnalysisApplicationService:
                     "retryable": error.code in _RETRYABLE_ANALYSIS_ERROR_CODES,
                 },
             )
+
+    async def _process_annotations_and_metrics(
+        self,
+        comparison_id: UUID,
+    ) -> AnalysisExecutionResult:
+        """逐批调用模型、提交断点，并在全部评论完成后计算指标。by AI.Coding"""
+        analyzer = self._required_annotation_analyzer()
+        while True:
+            context = await self._load_annotation_context(comparison_id)
+            remaining = tuple(
+                review
+                for review in context.reviews
+                if review.id not in context.processed_review_ids
+            )
+            if not remaining:
+                return await self._finalize_metrics(comparison_id)
+            batch = remaining[: self._annotation_batch_size]
+            try:
+                invocation = await analyzer.annotate(
+                    reviews=batch,
+                    dimensions=context.dimensions,
+                    trace_id=f"worker-{uuid4()}",
+                )
+            except ReviewAnnotationInvocationFailure as failure:
+                await self._mark_llm_failed(
+                    comparison_id,
+                    failure.error,
+                    failure.audit_event,
+                )
+                return await self._execution_from_progress(comparison_id, outcome="failed")
+            await self._persist_annotation_batch(
+                comparison_id,
+                invocation,
+                total_review_count=len(context.reviews),
+            )
+
+    async def _load_annotation_context(self, comparison_id: UUID) -> _AnnotationContext:
+        """读取稳定评论、选中维度和已处理 ID，不跨 LLM 调用持有事务。by AI.Coding"""
+        async with self._uow_factory() as uow:
+            task = await self._required_task(self._comparison_repository(uow), comparison_id)
+            if task.status is not ComparisonStatus.PROCESSING or task.progress >= 75:
+                raise DomainConflictError("当前任务不在可执行评论注解的阶段")
+            reviews = await self._analysis_repository(uow).list_reviews_for_comparison(
+                comparison_id
+            )
+            dimensions = self._annotation_dimensions(task)
+            if not dimensions:
+                raise DomainConflictError("当前任务没有已选中的对比维度")
+            return _AnnotationContext(
+                reviews=tuple(self._review_for_annotation(review) for review in reviews),
+                dimensions=dimensions,
+                processed_review_ids=self._processed_review_ids(task),
+            )
+
+    async def _persist_annotation_batch(
+        self,
+        comparison_id: UUID,
+        invocation: ReviewAnnotationInvocation,
+        *,
+        total_review_count: int,
+    ) -> None:
+        """在行锁下原子保存模型审计、当前批注解和断点进度。by AI.Coding"""
+        async with self._uow_factory() as uow:
+            comparison_repository = self._comparison_repository(uow)
+            analysis_repository = self._analysis_repository(uow)
+            task = await self._required_task(
+                comparison_repository,
+                comparison_id,
+                for_update=True,
+            )
+            if task.status is not ComparisonStatus.PROCESSING or task.progress >= 75:
+                return
+            current_processed = self._processed_review_ids(task)
+            pending_ids = frozenset(invocation.batch.processed_review_ids) - current_processed
+            model_run = self._model_run_repository(uow).add_from_audit_event(
+                invocation.audit_event,
+                comparison_id=comparison_id,
+            )
+            await self._model_run_repository(uow).flush()
+            if pending_ids:
+                analysis_repository.add_annotations(
+                    tuple(
+                        annotation
+                        for annotation in invocation.batch.annotations
+                        if annotation.review_id in pending_ids
+                    ),
+                    model_run_id=model_run.id,
+                )
+                await analysis_repository.flush()
+            reviews = await analysis_repository.list_reviews_for_comparison(comparison_id)
+            merged = current_processed | pending_ids
+            ordered_processed = [str(review.id) for review in reviews if review.id in merged]
+            annotated_review_count = (
+                await analysis_repository.count_annotated_reviews_for_comparison(comparison_id)
+            )
+            annotation_count = await analysis_repository.count_annotations_for_comparison(
+                comparison_id
+            )
+            task.progress = self._annotation_progress(
+                len(ordered_processed),
+                total_review_count,
+            )
+            task.partial_result = {
+                "schema_version": 1,
+                "phase": "annotation",
+                "processed_review_ids": ordered_processed,
+                "annotated_review_count": annotated_review_count,
+                "annotation_count": annotation_count,
+            }
+            comparison_repository.add_event(
+                comparison_id=comparison_id,
+                stage=TaskStage.ANALYSIS,
+                event_type=TaskEventType.PROGRESS_UPDATED,
+                progress=task.progress,
+                message="评论智能注解批次已保存。",
+                details={
+                    "code": "REVIEW_ANNOTATION_BATCH_COMPLETED",
+                    "processed_review_count": len(ordered_processed),
+                    "total_review_count": total_review_count,
+                    "annotated_review_count": annotated_review_count,
+                    "annotation_count": annotation_count,
+                },
+            )
+
+    async def _finalize_metrics(self, comparison_id: UUID) -> AnalysisExecutionResult:
+        """在事务外计算纯指标，并在短事务中整体替换后推进到 75。by AI.Coding"""
+        await self._mark_metrics_calculating(comparison_id)
+        async with self._uow_factory() as uow:
+            task = await self._required_task(self._comparison_repository(uow), comparison_id)
+            analysis_repository = self._analysis_repository(uow)
+            reviews = await analysis_repository.list_reviews_for_comparison(comparison_id)
+            annotations = await analysis_repository.list_annotations_for_comparison(comparison_id)
+            dimensions = self._selected_dimension_definitions(task)
+        metrics = calculate_review_metrics(
+            comparison_id=comparison_id,
+            reviews=tuple(
+                MetricReview(
+                    id=review.id,
+                    comparison_product_id=review.comparison_product_id,
+                )
+                for review in reviews
+            ),
+            annotations=tuple(self._metric_annotation(annotation) for annotation in annotations),
+            dimensions=tuple(
+                MetricDimension(id=dimension.id, code=dimension.code) for dimension in dimensions
+            ),
+        )
+        async with self._uow_factory() as uow:
+            comparison_repository = self._comparison_repository(uow)
+            analysis_repository = self._analysis_repository(uow)
+            task = await self._required_task(
+                comparison_repository,
+                comparison_id,
+                for_update=True,
+            )
+            if task.status is not ComparisonStatus.PROCESSING or task.progress >= 75:
+                ignored = True
+            else:
+                ignored = False
+                current_reviews = await analysis_repository.list_reviews_for_comparison(
+                    comparison_id
+                )
+                processed = self._processed_review_ids(task)
+                if {review.id for review in current_reviews} - processed:
+                    raise DomainConflictError("仍有评论尚未完成智能注解")
+                await analysis_repository.replace_review_metrics(
+                    comparison_id=comparison_id,
+                    metrics=metrics,
+                )
+                await analysis_repository.flush()
+                annotated_review_count = (
+                    await analysis_repository.count_annotated_reviews_for_comparison(comparison_id)
+                )
+                annotation_count = await analysis_repository.count_annotations_for_comparison(
+                    comparison_id
+                )
+                task.progress = 75
+                task.partial_result = {
+                    "schema_version": 1,
+                    "phase": "metrics_ready",
+                    "processed_review_ids": [str(review.id) for review in current_reviews],
+                    "annotated_review_count": annotated_review_count,
+                    "annotation_count": annotation_count,
+                    "metric_count": len(metrics),
+                }
+                comparison_repository.add_event(
+                    comparison_id=comparison_id,
+                    stage=TaskStage.ANALYSIS,
+                    event_type=TaskEventType.PROGRESS_UPDATED,
+                    progress=75,
+                    message="评论注解与确定性指标已准备，等待生成报告。",
+                    details={
+                        "code": "REVIEW_METRICS_COMPLETED",
+                        "annotated_review_count": annotated_review_count,
+                        "annotation_count": annotation_count,
+                        "metric_count": len(metrics),
+                    },
+                )
+        if ignored:
+            return await self._execution_from_progress(comparison_id, outcome="ignored")
+        return await self._execution_from_progress(comparison_id, outcome="processed")
+
+    async def _mark_metrics_calculating(self, comparison_id: UUID) -> None:
+        """提交 progress=70，使轮询端可观察确定性指标阶段。by AI.Coding"""
+        async with self._uow_factory() as uow:
+            repository = self._comparison_repository(uow)
+            task = await self._required_task(repository, comparison_id, for_update=True)
+            if task.status is not ComparisonStatus.PROCESSING or task.progress >= 70:
+                return
+            task.progress = 70
+            repository.add_event(
+                comparison_id=comparison_id,
+                stage=TaskStage.ANALYSIS,
+                event_type=TaskEventType.PROGRESS_UPDATED,
+                progress=70,
+                message="正在根据已验证注解计算确定性指标。",
+                details={"code": "REVIEW_METRICS_CALCULATING"},
+            )
+
+    async def _mark_llm_failed(
+        self,
+        comparison_id: UUID,
+        error: LLMError,
+        audit_event: LLMAuditEvent,
+    ) -> None:
+        """保存安全模型审计，并把 processing 任务标记为受控失败。by AI.Coding"""
+        async with self._uow_factory() as uow:
+            repository = self._comparison_repository(uow)
+            task = await self._required_task(repository, comparison_id, for_update=True)
+            if task.status is not ComparisonStatus.PROCESSING or task.progress >= 75:
+                return
+            self._model_run_repository(uow).add_from_audit_event(
+                audit_event,
+                comparison_id=comparison_id,
+            )
+            repository.transition(task, ComparisonStatus.FAILED)
+            task.error_code = error.code
+            task.error_message = "评论智能注解失败。"
+            repository.add_event(
+                comparison_id=comparison_id,
+                stage=TaskStage.ANALYSIS,
+                event_type=TaskEventType.ERROR,
+                progress=task.progress,
+                message="评论智能注解失败。",
+                details={
+                    "code": error.code,
+                    "retryable": error.code in _RETRYABLE_ANALYSIS_ERROR_CODES,
+                },
+            )
+
+    @staticmethod
+    def _annotation_dimensions(task: ComparisonTask) -> tuple[AnnotationDimension, ...]:
+        """把任务已选目录维度映射为模型输入白名单。by AI.Coding"""
+        return tuple(
+            AnnotationDimension(
+                id=dimension.id,
+                code=dimension.code,
+                name=dimension.name,
+                description=(
+                    str(dimension.config.get("description", ""))
+                    if isinstance(dimension.config, dict)
+                    else ""
+                ),
+                aliases=AnalysisApplicationService._dimension_aliases(dimension),
+            )
+            for dimension in AnalysisApplicationService._selected_dimension_definitions(task)
+        )
+
+    @staticmethod
+    def _dimension_aliases(dimension: DimensionDefinition) -> tuple[str, ...]:
+        """从受控目录 config 提取非空 alias，并补充维度名称。by AI.Coding"""
+        raw_aliases = (
+            dimension.config.get("aliases", []) if isinstance(dimension.config, dict) else []
+        )
+        if not isinstance(raw_aliases, list):
+            raw_aliases = []
+        aliases = [item.strip() for item in raw_aliases if isinstance(item, str) and item.strip()]
+        if dimension.name not in aliases:
+            aliases.append(dimension.name)
+        return tuple(aliases)
+
+    @staticmethod
+    def _selected_dimension_definitions(
+        task: ComparisonTask,
+    ) -> tuple[DimensionDefinition, ...]:
+        """按用户确认位置返回任务已选且仍启用的目录维度。by AI.Coding"""
+        selected = sorted(
+            (
+                item
+                for item in task.dimensions
+                if item.selected and item.position is not None and item.dimension.enabled
+            ),
+            key=lambda item: item.position if item.position is not None else 0,
+        )
+        return tuple(item.dimension for item in selected)
+
+    @staticmethod
+    def _review_for_annotation(review: RawReview) -> ReviewForAnnotation:
+        """把 ORM 评论显式映射为模型最小输入。by AI.Coding"""
+        return ReviewForAnnotation(
+            id=review.id,
+            comparison_product_id=review.comparison_product_id,
+            content=review.content,
+            rating=review.rating,
+        )
+
+    @staticmethod
+    def _metric_annotation(annotation: ReviewAnnotation) -> MetricAnnotation:
+        """把 ORM 注解映射为纯指标计算输入。by AI.Coding"""
+        return MetricAnnotation(
+            id=annotation.id,
+            review_id=annotation.review_id,
+            dimension_id=annotation.dimension_id,
+            sentiment=annotation.sentiment,
+            confidence=annotation.confidence,
+        )
+
+    @staticmethod
+    def _processed_review_ids(task: ComparisonTask) -> frozenset[UUID]:
+        """从受控 partial_result 解析可恢复的已处理评论 UUID。by AI.Coding"""
+        partial = task.partial_result
+        if not isinstance(partial, dict) or partial.get("schema_version") != 1:
+            return frozenset()
+        raw_ids = partial.get("processed_review_ids")
+        if not isinstance(raw_ids, list):
+            return frozenset()
+        parsed: set[UUID] = set()
+        for raw_id in raw_ids:
+            if not isinstance(raw_id, str):
+                continue
+            try:
+                parsed.add(UUID(raw_id))
+            except ValueError:
+                continue
+        return frozenset(parsed)
+
+    @staticmethod
+    def _has_annotation_checkpoint(task: ComparisonTask) -> bool:
+        """判断失败任务是否已经进入 M1-F 注解阶段。by AI.Coding"""
+        partial = task.partial_result
+        return (
+            isinstance(partial, dict)
+            and partial.get("schema_version") == 1
+            and partial.get("phase") in {"annotation", "metrics_ready"}
+        )
+
+    @staticmethod
+    def _annotation_progress(processed_count: int, total_count: int) -> int:
+        """把评论批次完成比例映射到 46..69 的稳定进度区间。by AI.Coding"""
+        if total_count <= 0:
+            return 69
+        if processed_count <= 0:
+            return 45
+        return min(69, 45 + math.ceil(24 * processed_count / total_count))
+
+    async def _execution_from_progress(
+        self,
+        comparison_id: UUID,
+        *,
+        outcome: str,
+    ) -> AnalysisExecutionResult:
+        """把当前持久化进度映射为 Worker 返回结果。by AI.Coding"""
+        progress = await self.get_analysis_progress(comparison_id)
+        return AnalysisExecutionResult(
+            comparison_id=comparison_id,
+            outcome=outcome,
+            status=progress.status,
+            fetched_review_count=progress.fetched_review_count,
+            valid_review_count=progress.valid_review_count,
+            annotated_review_count=progress.annotated_review_count,
+            annotation_count=progress.annotation_count,
+            metric_count=progress.metric_count,
+        )
 
     @staticmethod
     def _fetch_targets(
@@ -355,16 +819,25 @@ class AnalysisApplicationService:
         return 0
 
     @staticmethod
-    def _progress_copy(status: ComparisonStatus) -> tuple[str, str]:
-        """把持久化状态映射为稳定阶段和用户可见文案。by AI.Coding"""
+    def _progress_copy(task: ComparisonTask) -> tuple[str, str]:
+        """把持久化状态和进度映射为稳定阶段与用户可见文案。by AI.Coding"""
+        status = task.status
+        if status is ComparisonStatus.PROCESSING:
+            if task.progress >= 75:
+                return (
+                    "metrics_ready",
+                    "评论注解与确定性指标已准备，等待生成报告。",
+                )
+            if task.progress >= 70:
+                return ("calculating_metrics", "正在计算确定性评论指标。")
+            return ("annotating_reviews", "正在对近期评论执行维度与情感注解。")
+        if status is ComparisonStatus.FAILED:
+            if task.error_code and task.error_code.startswith("LLM_"):
+                return ("failed", "评论智能注解失败。")
+            return ("failed", "评论采集失败。")
         return {
             ComparisonStatus.QUEUED: ("queued", "任务已排队，等待评论采集。"),
             ComparisonStatus.FETCHING: ("fetching_reviews", "正在获取并清洗近期评论。"),
-            ComparisonStatus.PROCESSING: (
-                "review_data_ready",
-                "近期评论已获取并清洗，等待后续分析。",
-            ),
-            ComparisonStatus.FAILED: ("failed", "评论采集失败。"),
             ComparisonStatus.COMPLETED: ("completed", "任务已完成。"),
             ComparisonStatus.PARTIALLY_COMPLETED: (
                 "partially_completed",
@@ -374,7 +847,7 @@ class AnalysisApplicationService:
 
     @staticmethod
     def _can_retry(task: ComparisonTask) -> bool:
-        """仅允许已确认维度且错误码可重试的分析失败重新排队。by AI.Coding"""
+        """仅允许已确认维度且错误码属于受控集合的失败重新排队。by AI.Coding"""
         return (
             task.status is ComparisonStatus.FAILED
             and task.error_code in _RETRYABLE_ANALYSIS_ERROR_CODES
@@ -387,6 +860,12 @@ class AnalysisApplicationService:
             raise RuntimeError("当前分析服务未配置任务调度器")
         return self._dispatcher
 
+    def _required_annotation_analyzer(self) -> ReviewAnnotationAnalyzer:
+        """取得 Worker 运行所需模型注解器，API 侧误调用时显式失败。by AI.Coding"""
+        if self._annotation_analyzer is None:
+            raise RuntimeError("当前分析服务未配置评论注解器")
+        return self._annotation_analyzer
+
     @staticmethod
     def _comparison_repository(uow: UnitOfWork) -> ComparisonRepository:
         """从工作单元创建 ComparisonRepository。by AI.Coding"""
@@ -398,6 +877,12 @@ class AnalysisApplicationService:
         """从工作单元创建 AnalysisRepository。by AI.Coding"""
         assert uow.session is not None
         return AnalysisRepository(uow.session)
+
+    @staticmethod
+    def _model_run_repository(uow: UnitOfWork) -> ModelRunRepository:
+        """从工作单元创建模型运行仓储。by AI.Coding"""
+        assert uow.session is not None
+        return ModelRunRepository(uow.session)
 
     @staticmethod
     async def _required_task(

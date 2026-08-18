@@ -158,7 +158,7 @@ class DimensionSetResponse(_StrictSchema):
 
 
 class AnalysisProgressResponse(_StrictSchema):
-    """定义异步评论采集进度的安全恢复结构。by AI.Coding"""
+    """定义评论采集、智能注解和指标计算的安全恢复结构。by AI.Coding"""
 
     comparison_id: UUID
     status: str
@@ -167,6 +167,9 @@ class AnalysisProgressResponse(_StrictSchema):
     message: str
     fetched_review_count: int
     valid_review_count: int
+    annotated_review_count: int
+    annotation_count: int
+    metric_count: int
     can_retry: bool
     polling_complete: bool
 

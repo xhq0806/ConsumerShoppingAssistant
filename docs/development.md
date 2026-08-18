@@ -79,7 +79,7 @@ alembic check
 M1-D 通过 `0006` 写入通用和 Fixture 手机品类维度种子，不修改 Schema。当前 head 为
 `0006`。Repository 不自行提交事务，由应用用例或 UnitOfWork 控制提交与回滚。
 
-## M1-E 对比 API、Worker 与页面
+## M1-F 对比 API、Worker 与页面
 
 ```text
 POST /api/v1/comparisons
@@ -109,8 +109,11 @@ GET  /api/v1/comparisons/{comparison_id}/analysis/progress
 - 进度页调用 start API 投递 Celery；重复消息通过任务根行锁和 queued 状态门禁安全忽略。
 - Worker 在事务外获取 Fixture 评论，全部商品成功后才原子保存清洗后的 `raw_reviews`。
 - 评论执行 NFKC、空白收敛、窗口过滤、受控无意义文本过滤和商品内稳定正文去重。
-- 成功后状态为 `processing`、进度为 45，表示评论数据已准备，不表示主题分析或报告完成。
-- Provider unavailable/rate limit 失败可重新排队；其他失败拒绝 retry。
+- 评论保存后进入 `processing/45`，Worker 随后以最多 20 条为一批调用 LLM analysis profile。
+- 模型只使用已选维度，应用层拒绝批次外 ID、未知维度、重复关系和非连续原文证据。
+- 每批提交注解、模型审计和已处理 review IDs；retry 从断点继续且不重新获取评论。
+- Python 重建商品级与任务级计数、比例、覆盖率和置信度，最终推进到 `processing/75`。
+- Provider unavailable/rate limit，以及 LLM timeout/rate limit/unavailable/invalid output 可 retry。
 - API 尚无用户身份与任务归属控制，只能用于本地开发，不得直接公网开放。
 
 前端路由：
@@ -120,7 +123,7 @@ GET  /api/v1/comparisons/{comparison_id}/analysis/progress
 /comparisons/:id/confirm               商品事实与 SKU 确认
 /comparisons/:id/preferences           评论范围与购买偏好
 /comparisons/:id/dimensions            动态维度调整与确认
-/comparisons/:id/progress              评论采集与清洗进度
+/comparisons/:id/progress              评论采集、智能注解与指标进度
 ```
 
 - 页面恢复以路由中的任务 ID 和服务端详情为真源，不依赖 Pinia 内存状态。
@@ -128,7 +131,7 @@ GET  /api/v1/comparisons/{comparison_id}/analysis/progress
 - Nginx 容器将 `/api/` 代理到 `api:8000`，并使用 SPA fallback 支持深层路由刷新。
 - 原始商品链接仅存在于创建前的表单内存中，不写入浏览器持久化。
 - 维度页支持重点/其他可选、搜索、增删、拖拽、顺序按钮、理由和数据风险。
-- 进度页自动启动 queued 任务并每秒轮询；临时请求失败后继续重试，processing/failed 时停止。
+- 进度页自动启动 queued 或恢复 processing<75 的任务并每秒轮询；75 或 failed 时停止。
 
 Compose 包含一次性 `migrate` 服务，API 和 Worker 仅在迁移成功后启动。Celery 同步 task
 每次在自身事件循环内创建并释放 asyncpg engine，避免连续任务复用已关闭事件循环连接。
@@ -143,12 +146,11 @@ npm run test -- --run
 npm run build
 ```
 
-M1-E 的浏览器验收覆盖完整五步流程、真实 Celery Worker、评论清洗计数、刷新恢复、桌面端和
+M1-F 的浏览器验收覆盖完整五步流程、真实 Celery/DeepSeek Worker、注解与指标计数、刷新恢复、桌面端和
 `390x844` 移动端布局。验收截图位于：
 
 ```text
-docs/assets/m1e-progress-desktop.png
-docs/assets/m1e-progress-mobile.png
+docs/assets/m1f-progress-desktop.png
 ```
 
 ## 新 Commerce Provider 规则
@@ -194,7 +196,7 @@ DEEPSEEK_REPORT_REASONING_EFFORT=high
 - DeepSeek 空 content、无效 JSON 或 Pydantic 校验失败继续由 Gateway 重试。
 - 400/422 无效请求、401/403 鉴权和 402 额度不足不重试；429、5xx、连接错误和超时映射为受控 LLM 错误。
 - Adapter 不保存 `reasoning_content`，审计只记录 provider/model/token/时延/状态。
-- 当前 M1-E 不调用模型；后续评论注解用例再通过 analysis profile 接入。
+- M1-F 评论注解通过 analysis profile 接入；report profile 仍等待 M1-G。
 
 配置完成后的最小连通性检查：
 

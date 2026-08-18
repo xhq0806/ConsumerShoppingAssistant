@@ -91,8 +91,8 @@ class _FakeComparisonService:
         return self._analysis_progress()
 
     async def get_analysis_progress(self, _comparison_id: object) -> AnalysisProgressView:
-        """返回评论数据准备完成的稳定进度。by AI.Coding"""
-        return self._analysis_progress(status="processing", progress=45)
+        """返回评论注解与指标准备完成的稳定进度。by AI.Coding"""
+        return self._analysis_progress(status="processing", progress=75)
 
     def _view(self, *, preferences: UserPreferences | None = None) -> ComparisonView:
         """构造无敏感字段的稳定应用视图。by AI.Coding"""
@@ -163,10 +163,13 @@ class _FakeComparisonService:
             comparison_id=self.comparison_id,
             status=status,
             progress=progress,
-            stage="queued" if status == "queued" else "review_data_ready",
-            message="任务已排队。" if status == "queued" else "评论数据已准备。",
+            stage="queued" if status == "queued" else "metrics_ready",
+            message="任务已排队。" if status == "queued" else "评论指标已准备。",
             fetched_review_count=3 if status == "processing" else 0,
             valid_review_count=2 if status == "processing" else 0,
+            annotated_review_count=1 if status == "processing" else 0,
+            annotation_count=1 if status == "processing" else 0,
+            metric_count=144 if status == "processing" else 0,
             can_retry=False,
             polling_complete=status == "processing",
         )
@@ -396,11 +399,14 @@ async def test_analysis_routes_start_retry_and_return_progress_contract(
     assert progress.json() == {
         "comparison_id": str(fake_service.comparison_id),
         "status": "processing",
-        "progress": 45,
-        "stage": "review_data_ready",
-        "message": "评论数据已准备。",
+        "progress": 75,
+        "stage": "metrics_ready",
+        "message": "评论指标已准备。",
         "fetched_review_count": 3,
         "valid_review_count": 2,
+        "annotated_review_count": 1,
+        "annotation_count": 1,
+        "metric_count": 144,
         "can_retry": False,
         "polling_complete": True,
     }

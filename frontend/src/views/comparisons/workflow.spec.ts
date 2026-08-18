@@ -146,11 +146,14 @@ const dimensionSetFixture: DimensionSet = {
 const analysisProgressFixture: AnalysisProgress = {
   comparison_id: 'comparison-1',
   status: 'processing',
-  progress: 45,
-  stage: 'review_data_ready',
-  message: '近期评论已获取并清洗，等待后续分析。',
+  progress: 75,
+  stage: 'metrics_ready',
+  message: '评论注解与确定性指标已准备，等待生成报告。',
   fetched_review_count: 3,
   valid_review_count: 2,
+  annotated_review_count: 1,
+  annotation_count: 1,
+  metric_count: 144,
   can_retry: false,
   polling_complete: true,
 }
@@ -319,6 +322,9 @@ describe('M1-C workflow views', () => {
       message: '任务已排队，等待评论采集。',
       fetched_review_count: 0,
       valid_review_count: 0,
+      annotated_review_count: 0,
+      annotation_count: 0,
+      metric_count: 0,
       polling_complete: false,
     })
     vi.mocked(startComparisonAnalysis).mockResolvedValue(analysisProgressFixture)
@@ -331,9 +337,12 @@ describe('M1-C workflow views', () => {
     await flushPromises()
 
     expect(startComparisonAnalysis).toHaveBeenCalledWith('comparison-1')
-    expect(wrapper.text()).toContain('近期评论已获取并清洗')
+    expect(wrapper.text()).toContain('评论注解与确定性指标已准备')
     expect(wrapper.text()).toContain('Provider 获取')
     expect(wrapper.text()).toContain('清洗后有效')
+    expect(wrapper.text()).toContain('已有维度注解')
+    expect(wrapper.text()).toContain('确定性指标')
+    expect(wrapper.text()).toContain('144')
     expect(wrapper.text()).toContain('3')
     expect(wrapper.text()).toContain('2')
   })
@@ -355,6 +364,9 @@ describe('M1-C workflow views', () => {
         message: '任务已排队，等待评论采集。',
         fetched_review_count: 0,
         valid_review_count: 0,
+        annotated_review_count: 0,
+        annotation_count: 0,
+        metric_count: 0,
         polling_complete: false,
       })
     vi.mocked(startComparisonAnalysis).mockResolvedValue(analysisProgressFixture)
@@ -371,7 +383,7 @@ describe('M1-C workflow views', () => {
 
     expect(getComparisonAnalysisProgress).toHaveBeenCalledTimes(2)
     expect(startComparisonAnalysis).toHaveBeenCalledWith('comparison-1')
-    expect(wrapper.text()).toContain('近期评论已获取并清洗')
+    expect(wrapper.text()).toContain('评论注解与确定性指标已准备')
     wrapper.unmount()
     vi.useRealTimers()
   })

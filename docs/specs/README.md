@@ -12,3 +12,4 @@
 | M1-D 动态维度推荐与确认闭环 | [m1d-dynamic-dimensions.md](m1d-dynamic-dimensions.md) | 2026-08-11 | 维度种子、确定性推荐、任务维度 API、Vue 确认页 |
 | M1-E 异步评论采集与进度闭环 | [m1e-async-review-ingestion.md](m1e-async-review-ingestion.md) | 2026-08-17 | Compose migrate、Celery Worker、评论清洗、进度 API/页面 |
 | DeepSeek LLM 配置与 Adapter | [deepseek-llm-adapter.md](deepseek-llm-adapter.md) | 2026-08-17 | Chat Completions、analysis/report profile、JSON、thinking、脱敏审计 |
+| M1-F 评论智能注解与指标计算闭环 | [m1f-review-annotation-metrics.md](m1f-review-annotation-metrics.md) | 2026-08-17 | DeepSeek analysis、评论证据注解、断点恢复、确定性指标、processing/75 |

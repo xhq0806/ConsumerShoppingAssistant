@@ -107,6 +107,9 @@ export interface AnalysisProgress {
   message: string
   fetched_review_count: number
   valid_review_count: number
+  annotated_review_count: number
+  annotation_count: number
+  metric_count: number
   can_retry: boolean
   polling_complete: boolean
 }

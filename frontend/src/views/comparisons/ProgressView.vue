@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// M1-E 异步评论采集进度、轮询恢复和失败重试页面。by AI.Coding
+// M1-F 评论采集、智能注解、指标计算和失败恢复页面。by AI.Coding
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -51,9 +51,21 @@ const stages = computed(() => [
   },
   {
     key: 'analysis',
-    title: '后续分析',
-    description: '主题、情感和指标将在下一里程碑执行',
+    title: '智能注解',
+    description: '识别受控维度、情感和原文证据',
     state: stageState(3),
+  },
+  {
+    key: 'metrics',
+    title: '计算指标',
+    description: '由确定性程序计算计数、比例、覆盖率和置信度',
+    state: stageState(4),
+  },
+  {
+    key: 'report',
+    title: '报告待生成',
+    description: '注解与指标就绪，等待下一阶段生成购买建议',
+    state: stageState(5),
   },
 ])
 
@@ -77,7 +89,10 @@ async function initialize(): Promise<void> {
       return
     }
     let current = await comparisonStore.loadAnalysisProgress(comparisonId.value)
-    if (current.status === 'queued') {
+    if (
+      current.status === 'queued' ||
+      (current.status === 'processing' && current.progress < 75)
+    ) {
       current = await comparisonStore.startAnalysis(comparisonId.value)
     }
     continuePolling(current)
@@ -141,21 +156,30 @@ async function retryAnalysis(): Promise<void> {
 }
 
 function stageState(index: number): 'done' | 'active' | 'pending' | 'failed' {
-  /** 按持久化状态映射四个进度阶段。by AI.Coding */
+  /** 按持久化状态和进度映射六个稳定阶段。by AI.Coding */
   const status = progress.value?.status
   if (status === 'failed') {
-    return index <= 1 ? 'failed' : 'pending'
+    const failedIndex = (progress.value?.progress ?? 0) >= 45 ? 3 : 1
+    if (index < failedIndex) return 'done'
+    return index === failedIndex ? 'failed' : 'pending'
   }
-  const currentIndex =
-    {
-    queued: 0,
-    fetching: 1,
-    processing: 2,
-    completed: 3,
-    partially_completed: 3,
-    }[status ?? 'queued'] ?? 0
+  let currentIndex = 0
+  if (status === 'fetching') currentIndex = 1
+  if (status === 'processing') {
+    const percent = progress.value?.progress ?? 45
+    currentIndex = percent >= 75 ? 5 : percent >= 70 ? 4 : percent >= 45 ? 3 : 2
+  }
+  if (status === 'completed' || status === 'partially_completed') currentIndex = 5
   if (index < currentIndex) return 'done'
-  if (index === currentIndex) return status === 'processing' && index === 2 ? 'done' : 'active'
+  if (index === currentIndex) {
+    if (
+      status === 'processing' &&
+      (index === 5 || (index === 2 && (progress.value?.progress ?? 0) >= 45))
+    ) {
+      return 'done'
+    }
+    return 'active'
+  }
   return 'pending'
 }
 </script>
@@ -168,8 +192,8 @@ function stageState(index: number): 'done' | 'active' | 'pending' | 'failed' {
     <main class="workspace progress-workspace">
       <header class="workspace-heading">
         <div>
-          <span class="eyebrow">M1-E / 异步任务</span>
-          <h1>准备近期评论数据</h1>
+          <span class="eyebrow">M1-F / 评论分析</span>
+          <h1>分析近期评论</h1>
           <p>任务 {{ comparisonId }}</p>
         </div>
         <span v-if="polling" class="polling-state">
@@ -191,7 +215,9 @@ function stageState(index: number): 'done' | 'active' | 'pending' | 'failed' {
         <section class="progress-summary">
           <div class="progress-copy">
             <span :class="['status-mark', `status-${progress?.status ?? 'queued'}`]">
-              <CheckCircleOutlined v-if="progress?.status === 'processing'" />
+              <CheckCircleOutlined
+                v-if="progress?.status === 'processing' && progress.progress >= 75"
+              />
               <WarningOutlined v-else-if="progress?.status === 'failed'" />
               <ClockCircleOutlined v-else />
             </span>
@@ -238,6 +264,18 @@ function stageState(index: number): 'done' | 'active' | 'pending' | 'failed' {
               <dd>{{ progress?.valid_review_count ?? 0 }}</dd>
             </div>
             <div>
+              <dt>已有维度注解</dt>
+              <dd>{{ progress?.annotated_review_count ?? 0 }}</dd>
+            </div>
+            <div>
+              <dt>注解总数</dt>
+              <dd>{{ progress?.annotation_count ?? 0 }}</dd>
+            </div>
+            <div>
+              <dt>确定性指标</dt>
+              <dd>{{ progress?.metric_count ?? 0 }}</dd>
+            </div>
+            <div>
               <dt>评论窗口</dt>
               <dd>近 {{ comparisonStore.comparison?.review_window_days ?? 30 }} 天</dd>
             </div>
@@ -245,7 +283,7 @@ function stageState(index: number): 'done' | 'active' | 'pending' | 'failed' {
         </section>
 
         <footer v-if="progress?.status === 'failed'" class="failure-actions">
-          <span>评论采集未完成。</span>
+          <span>评论分析未完成。</span>
           <a-button
             v-if="progress.can_retry"
             class="primary-command"

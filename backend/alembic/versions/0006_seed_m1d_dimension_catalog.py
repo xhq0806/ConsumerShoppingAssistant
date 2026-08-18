@@ -392,13 +392,28 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """仅删除本迁移声明的固定维度 code。by AI.Coding"""
+    """先清理种子维度的任务派生数据，再删除本迁移固定目录。by AI.Coding"""
     dimensions = _dimension_table()
+    review_annotations = sa.table(
+        "review_annotations",
+        sa.column("dimension_id", sa.UUID()),
+    )
+    analysis_metrics = sa.table(
+        "analysis_metrics",
+        sa.column("dimension_id", sa.UUID()),
+    )
     task_dimensions = sa.table(
         "task_dimensions",
         sa.column("dimension_id", sa.UUID()),
     )
     seed_ids = [seed["id"] for seed in _SEEDS]
+    # M1-F 会让注解和指标引用目录种子，降级必须按外键依赖顺序清理派生数据。
+    op.get_bind().execute(
+        sa.delete(analysis_metrics).where(analysis_metrics.c.dimension_id.in_(seed_ids))
+    )
+    op.get_bind().execute(
+        sa.delete(review_annotations).where(review_annotations.c.dimension_id.in_(seed_ids))
+    )
     op.get_bind().execute(
         sa.delete(task_dimensions).where(task_dimensions.c.dimension_id.in_(seed_ids))
     )

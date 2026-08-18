@@ -71,11 +71,14 @@ const dimensionSetFixture: DimensionSet = {
 const analysisProgressFixture: AnalysisProgress = {
   comparison_id: 'comparison-1',
   status: 'processing',
-  progress: 45,
-  stage: 'review_data_ready',
-  message: '近期评论已获取并清洗，等待后续分析。',
+  progress: 75,
+  stage: 'metrics_ready',
+  message: '评论注解与确定性指标已准备，等待生成报告。',
   fetched_review_count: 3,
   valid_review_count: 2,
+  annotated_review_count: 1,
+  annotation_count: 1,
+  metric_count: 144,
   can_retry: false,
   polling_complete: true,
 }
@@ -178,6 +181,9 @@ describe('useComparisonStore', () => {
       message: '任务已排队。',
       fetched_review_count: 0,
       valid_review_count: 0,
+      annotated_review_count: 0,
+      annotation_count: 0,
+      metric_count: 0,
       polling_complete: false,
     })
     vi.mocked(getComparisonAnalysisProgress).mockResolvedValue(analysisProgressFixture)
@@ -189,6 +195,9 @@ describe('useComparisonStore', () => {
       message: '任务已重新排队。',
       fetched_review_count: 0,
       valid_review_count: 0,
+      annotated_review_count: 0,
+      annotation_count: 0,
+      metric_count: 0,
       polling_complete: false,
     })
     const store = useComparisonStore()

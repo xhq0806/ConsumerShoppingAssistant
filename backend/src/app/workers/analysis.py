@@ -4,6 +4,7 @@ import asyncio
 from uuid import UUID
 
 from app.application.analysis_tasks import AnalysisApplicationService
+from app.application.review_analysis import GatewayReviewAnnotationAnalyzer
 from app.core.config import get_settings
 from app.infrastructure.db.engine import create_engine
 from app.infrastructure.db.session import create_session_factory
@@ -22,6 +23,7 @@ async def _run_process_comparison(comparison_id: UUID) -> dict[str, object]:
             lambda: UnitOfWork(session_factory),
             FixtureCommerceDataProvider(settings),
             dispatcher=None,
+            annotation_analyzer=GatewayReviewAnnotationAnalyzer(settings),
             max_reviews_per_product=settings.review_max_per_product,
         )
         result = await service.process_comparison(comparison_id)
@@ -31,6 +33,9 @@ async def _run_process_comparison(comparison_id: UUID) -> dict[str, object]:
             "status": result.status,
             "fetched_review_count": result.fetched_review_count,
             "valid_review_count": result.valid_review_count,
+            "annotated_review_count": result.annotated_review_count,
+            "annotation_count": result.annotation_count,
+            "metric_count": result.metric_count,
         }
     finally:
         # asyncio.run 即将关闭事件循环，必须先释放绑定该循环的 asyncpg 连接池。

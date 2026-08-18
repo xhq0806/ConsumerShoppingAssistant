@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// M1-E 输入、确认、偏好、维度和任务进度导航。by AI.Coding
+// M1-F 输入、确认、偏好、维度和评论分析进度导航。by AI.Coding
 
 defineProps<{
   current: 0 | 1 | 2 | 3 | 4
@@ -10,7 +10,7 @@ const items = [
   { title: '商品确认', description: '核对事实与 SKU' },
   { title: '购买偏好', description: '预算、场景与关注点' },
   { title: '对比维度', description: '调整重点与顺序' },
-  { title: '任务进度', description: '获取并清洗评论' },
+  { title: '任务进度', description: '注解并计算指标' },
 ]
 </script>
 
